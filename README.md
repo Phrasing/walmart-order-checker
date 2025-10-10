@@ -1,5 +1,7 @@
 # Walmart Order Checker
 
+![Walmart Order Checker](./.github/assets/vA7eZV5g.png)
+
 This tool scans your Gmail for Walmart order confirmation and cancellation emails to provide you with a summary of your order history.
 
 ## Setup
