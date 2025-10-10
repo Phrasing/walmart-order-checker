@@ -124,22 +124,7 @@ func calculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]flo
 	return productSummaryMap
 }
 
-func generateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan int, path string, shippedOrders []*ShippedOrder) {
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, 0, -daysToScan)
-	dateRangeStr := fmt.Sprintf("Email Scan Range: %s to %s (%d days)", startDate.Format("Jan 2, 2006"), endDate.Format("Jan 2, 2006"), daysToScan)
-
-	canonicalNames := make(map[string]string)
-	for _, order := range orders {
-		for i := range order.Items {
-			normalized := normalizeProductName(order.Items[i].Name)
-			if _, ok := canonicalNames[normalized]; !ok {
-				canonicalNames[normalized] = order.Items[i].Name
-			}
-			order.Items[i].Name = canonicalNames[normalized]
-		}
-	}
-
+func calculateEmailStats(orders map[string]*Order, totalEmailsScanned int) EmailStats {
 	totalOrders := len(orders)
 	totalCanceled := 0
 	for _, order := range orders {
@@ -151,14 +136,15 @@ func generateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	if totalOrders > 0 {
 		cancelRate = (float64(totalCanceled) / float64(totalOrders)) * 100
 	}
-
-	emailStats := EmailStats{
+	return EmailStats{
 		TotalEmailsScanned: totalEmailsScanned,
 		TotalOrders:        totalOrders,
 		TotalCanceled:      totalCanceled,
 		CancellationRate:   cancelRate,
 	}
+}
 
+func calculateProductStats(orders map[string]*Order) []ProductStats {
 	statsMap := make(map[string]*ProductStats)
 	for _, order := range orders {
 		for _, item := range order.Items {
@@ -183,6 +169,56 @@ func generateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].CancelRate > stats[j].CancelRate
 	})
+	return stats
+}
+
+func prepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]float64) []OrderDetail {
+	var orderDetails []OrderDetail
+	for _, order := range nonCanceledOrders {
+		for _, item := range order.Items {
+			var totalStr string
+			if price, ok := learnedPrices[item.Name]; ok {
+				totalStr = fmt.Sprintf("$%.2f", price*float64(item.Quantity))
+			} else {
+				totalStr = order.Total // Fallback for orders with unknown prices
+			}
+
+			orderDetails = append(orderDetails, OrderDetail{
+				OrderID:   formatOrderID(order.ID),
+				OrderDate: order.OrderDate,
+				ImageURL:  item.ImageURL,
+				Name:      item.Name,
+				Quantity:  item.Quantity,
+				Total:     totalStr,
+			})
+		}
+	}
+	return orderDetails
+}
+
+func generateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan int, path string, shippedOrders []*ShippedOrder) {
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -daysToScan)
+	dateRangeStr := fmt.Sprintf("Email Scan Range: %s to %s (%d days)", startDate.Format("Jan 2, 2006"), endDate.Format("Jan 2, 2006"), daysToScan)
+
+	canonicalNames := make(map[string]string)
+	for _, order := range orders {
+		for i := range order.Items {
+			normalized := normalizeProductName(order.Items[i].Name)
+			if _, ok := canonicalNames[normalized]; !ok {
+				canonicalNames[normalized] = order.Items[i].Name
+			}
+		}
+	}
+	for _, order := range orders {
+		for i := range order.Items {
+			normalized := normalizeProductName(order.Items[i].Name)
+			order.Items[i].Name = canonicalNames[normalized]
+		}
+	}
+
+	emailStats := calculateEmailStats(orders, totalEmailsScanned)
+	stats := calculateProductStats(orders)
 
 	var nonCanceledOrders []*Order
 	for _, order := range orders {
@@ -206,26 +242,7 @@ func generateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 		return productSummaries[i].TotalSpent > productSummaries[j].TotalSpent
 	})
 
-	var orderDetails []OrderDetail
-	for _, order := range nonCanceledOrders {
-		for _, item := range order.Items {
-			var totalStr string
-			if price, ok := learnedPrices[item.Name]; ok {
-				totalStr = fmt.Sprintf("$%.2f", price*float64(item.Quantity))
-			} else {
-				totalStr = order.Total // Fallback for orders with unknown prices
-			}
-
-			orderDetails = append(orderDetails, OrderDetail{
-				OrderID:   formatOrderID(order.ID),
-				OrderDate: order.OrderDate,
-				ImageURL:  item.ImageURL,
-				Name:      item.Name,
-				Quantity:  item.Quantity,
-				Total:     totalStr,
-			})
-		}
-	}
+	orderDetails := prepareOrderDetails(nonCanceledOrders, learnedPrices)
 
 	reportData := TemplateData{
 		Stats:            stats,
