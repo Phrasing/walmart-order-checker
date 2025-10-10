@@ -22,6 +22,8 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
+
+	"walmart-order-checker/pkg/report"
 )
 
 const (
@@ -34,34 +36,6 @@ const (
 )
 
 var daysToScan int
-
-// Order represents a Walmart order, including its ID, items, total cost, and status.
-type Order struct {
-	ID               string
-	Items            []Item
-	Total            string
-	OrderDate        string
-	OrderDateParsed  time.Time
-	Status           string
-	TrackingNumber   string
-	Carrier          string
-	EstimatedArrival string
-}
-
-// ShippedOrder represents a shipped order with its tracking information.
-type ShippedOrder struct {
-	ID               string
-	TrackingNumber   string
-	Carrier          string
-	EstimatedArrival string
-}
-
-// Item represents a single item within a Walmart order.
-type Item struct {
-	Name     string
-	Quantity int
-	ImageURL string
-}
 
 func getClient(config *oauth2.Config) *http.Client {
 	tokFile := "token.json"
@@ -224,9 +198,9 @@ func fetchMessages(srv *gmail.Service, user string, query string) []*gmail.Messa
 	return allMessages
 }
 
-func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message) (map[string]*Order, map[string]*ShippedOrder) {
-	orders := make(map[string]*Order)
-	shippedOrders := make(map[string]*ShippedOrder)
+func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message) (map[string]*report.Order, map[string]*report.ShippedOrder) {
+	orders := make(map[string]*report.Order)
+	shippedOrders := make(map[string]*report.ShippedOrder)
 	var mu sync.Mutex
 
 	bar := progressbar.NewOptions(len(allMessages),
@@ -264,7 +238,7 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 				}
 
 				var orderID string
-				var items []Item
+				var items []report.Item
 				var status string
 				var total string
 				var orderDate string
@@ -378,7 +352,7 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 							if len(qtyParts) > 1 {
 								fmt.Sscanf(qtyParts[1], "%d", &qty)
 							}
-							items = append(items, Item{Name: parts[1], Quantity: qty, ImageURL: imageURL})
+							items = append(items, report.Item{Name: parts[1], Quantity: qty, ImageURL: imageURL})
 						}
 					})
 				}
@@ -387,7 +361,7 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 					mu.Lock()
 					if status == "shipped" {
 						if _, ok := shippedOrders[orderID]; !ok {
-							shippedOrders[orderID] = &ShippedOrder{
+							shippedOrders[orderID] = &report.ShippedOrder{
 								ID:               orderID,
 								TrackingNumber:   trackingNumber,
 								Carrier:          carrier,
@@ -407,7 +381,7 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 								}
 							}
 						} else {
-							orders[orderID] = &Order{
+							orders[orderID] = &report.Order{
 								ID:              orderID,
 								Items:           items,
 								Total:           total,
@@ -462,24 +436,17 @@ func main() {
 	csvPath := fmt.Sprintf("%s/orders_%s.csv", outDir, dateRangeStr)
 	shippedCsvPath := fmt.Sprintf("%s/shipped_orders_%s.csv", outDir, dateRangeStr)
 
-	var shippedOrdersSlice []*ShippedOrder
+	var shippedOrdersSlice []*report.ShippedOrder
 	for _, so := range shippedOrders {
 		shippedOrdersSlice = append(shippedOrdersSlice, so)
 	}
 
-	generateHTML(orders, len(allMessages), daysToScan, htmlPath, shippedOrdersSlice)
-	generateCSV(orders, csvPath)
-	generateShippedCSV(shippedOrdersSlice, shippedCsvPath)
+	report.GenerateHTML(orders, len(allMessages), daysToScan, htmlPath, shippedOrdersSlice)
+	report.GenerateCSV(orders, csvPath)
+	report.GenerateShippedCSV(shippedOrdersSlice, shippedCsvPath)
 
 	fmt.Printf("HTML report has been generated: %s\n", htmlPath)
 	openBrowser(htmlPath)
-}
-
-func formatOrderID(id string) string {
-	if len(id) > 7 && !strings.Contains(id, "-") {
-		return id[:7] + "-" + id[7:]
-	}
-	return id
 }
 
 func findHTMLPart(part *gmail.MessagePart) string {
