@@ -28,7 +28,6 @@ _testmain.go
 
 # Dependency caches
 # Go module cache
-/pkg/
 /vendor/
 
 # Test results
