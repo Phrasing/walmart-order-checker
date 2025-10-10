@@ -1,0 +1,54 @@
+# Ignore all html, csv, txt, and json files
+*.html
+*.csv
+*.txt
+*.json
+
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+*.wasm
+*.o
+*.cgo1.go
+*.cgo2.c
+_testmain.go
+*.prof
+
+# Compiled binaries for the current project
+# (e.g., when running `go build`)
+# Adjust this to match your project's output names
+# e.g., if your main executable is `my-app`, add `my-app`
+# For a typical project, you might ignore the project name itself
+# if it's built in the root directory.
+# If you build into a `bin/` directory, you might ignore `bin/`
+# e.g., /bin/
+# or specific binaries within it: /bin/my-app
+
+# Dependency caches
+# Go module cache
+/pkg/
+/vendor/
+
+# Test results
+# Test coverage files
+*.out
+/out/
+
+# Editor/IDE specific files
+# Visual Studio Code
+.vscode/
+
+# JetBrains IDEs (GoLand, IntelliJ IDEA)
+.idea/
+*.iml
+
+# Vim swap files
+*.swp
+*.swo
+
+# Temporary files
+*~
+# Logs
+*.log
