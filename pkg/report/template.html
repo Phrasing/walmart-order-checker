@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Walmart Orders</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .dark-mode {
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+            position: relative;
+        }
+
+        .dark-mode .container {
+            background-color: #1e1e1e;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .dark-mode th,
+        .dark-mode td {
+            border-color: #444;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            cursor: pointer;
+        }
+
+        .dark-mode th {
+            background-color: #333;
+        }
+
+        img {
+            max-width: 50px;
+            max-height: 50px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        #theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .tab {
+            overflow: hidden;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .dark-mode .tab {
+            border-bottom: 1px solid #444;
+        }
+
+        .tab button {
+            background-color: inherit;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 14px 16px;
+            transition: 0.3s;
+            font-size: 17px;
+            color: inherit;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab button:hover {
+            opacity: 0.7;
+        }
+
+        .tab button.active {
+            border-bottom: 3px solid #007bff;
+        }
+
+        .tabcontent {
+            display: none;
+            padding: 20px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <button id="theme-toggle">💡</button>
+
+        <div class="tab">
+            <button class="tablinks active" onclick="openTab(event, 'OverallStats')">Overall Statistics</button>
+            <button class="tablinks" onclick="openTab(event, 'CancellationStats')">Cancellation Statistics</button>
+            <button class="tablinks" onclick="openTab(event, 'Orders')">Non-Canceled Orders</button>
+            <button class="tablinks" onclick="openTab(event, 'Shipped')">Shipped Orders</button>
+        </div>
+
+        <div id="OverallStats" class="tabcontent" style="display: block;">
+            <h1>Overall Statistics</h1>
+            <p style="text-align: center; font-style: italic;">{{.DateRange}}</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Total Emails Scanned</th>
+                        <th>Total Unique Orders</th>
+                        <th>Total Canceled Orders</th>
+                        <th>Cancellation Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>{{.EmailStats.TotalEmailsScanned}}</td>
+                        <td>{{.EmailStats.TotalOrders}}</td>
+                        <td>{{.EmailStats.TotalCanceled}}</td>
+                        <td>{{printf "%.2f" .EmailStats.CancellationRate}}%</td>
+                    </tr>
+                </tbody>
+            </table>
+            <h2 style="margin-top: 40px;">Total Units & Spending by Product</h2>
+            <table id="productSummaryTable">
+                <thead>
+                    <tr>
+                        <th>Thumbnail</th>
+                        <th>Product Name</th>
+                        <th onclick="sortTable(2, 'productSummaryTable')">Total Units (Non-Canceled) &#x2195;</th>
+                        <th onclick="sortTable(3, 'productSummaryTable')">Price Per Unit (Estimated) &#x2195;</th>
+                        <th onclick="sortTable(4, 'productSummaryTable')">Total Spent (Estimated) &#x2195;</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .ProductSummaries}}
+                    <tr>
+                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
+                        <td>{{.Name}}</td>
+                        <td>{{.TotalUnits}}</td>
+                        <td>${{printf "%.2f" .PricePerUnit}}</td>
+                        <td>${{printf "%.2f" .TotalSpent}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            <p style="font-size: 12px; text-align: center; margin-top: 10px;">
+                * Total Spent and Price Per Unit are estimated based on the total cost of orders containing only that
+                specific product. Orders with multiple different products are excluded from these calculations.
+            </p>
+        </div>
+
+        <div id="CancellationStats" class="tabcontent">
+            <h1>Cancellation Statistics by Product</h1>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Thumbnail</th>
+                        <th>Product Name</th>
+                        <th>Total Ordered</th>
+                        <th>Total Canceled</th>
+                        <th>Cancellation Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Stats}}
+                    <tr>
+                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
+                        <td>{{.Name}}</td>
+                        <td>{{.TotalOrdered}}</td>
+                        <td>{{.TotalCanceled}}</td>
+                        <td>{{printf "%.2f" .CancelRate}}%</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div id="Orders" class="tabcontent">
+            <h1>Non-Canceled Walmart Orders</h1>
+            <table id="ordersTable">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable(0, 'ordersTable')">Order Date &#x2195;</th>
+                        <th>Order #</th>
+                        <th>Thumbnail</th>
+                        <th>Product Name</th>
+                        <th>Quantity</th>
+                        <th>Line Total (Est.)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Orders}}
+                    <tr>
+                        <td>{{.OrderDate}}</td>
+                        <td>{{.OrderID}}</td>
+                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
+                        <td>{{.Name}}</td>
+                        <td>{{.Quantity}}</td>
+                        <td>{{.Total}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div id="Shipped" class="tabcontent">
+            <h1>Shipped Orders</h1>
+            <button onclick="exportTableToCSV('shippedTable', 'shipped-orders.csv')">Export to CSV</button>
+            <table id="shippedTable">
+                <thead>
+                    <tr>
+                        <th>Order #</th>
+                        <th>Carrier</th>
+                        <th>Tracking #</th>
+                        <th>Estimated Arrival</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .ShippedOrders}}
+                    <tr>
+                        <td>{{.ID}}</td>
+                        <td>{{.Carrier}}</td>
+                        <td>{{.TrackingNumber}}</td>
+                        <td>{{.EstimatedArrival}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        function exportTableToCSV(tableId, filename) {
+            var csv = [];
+            var rows = document.querySelectorAll("#" + tableId + " tr");
+
+            for (var i = 0; i < rows.length; i++) {
+                var row = [], cols = rows[i].querySelectorAll("td, th");
+
+                for (var j = 0; j < cols.length; j++)
+                    row.push(cols[j].innerText);
+
+                csv.push(row.join(","));
+            }
+
+            // Download CSV file
+            var csvFile = new Blob([csv.join("\n")], { type: "text/csv" });
+            var downloadLink = document.createElement("a");
+            downloadLink.download = filename;
+            downloadLink.href = window.URL.createObjectURL(csvFile);
+            downloadLink.style.display = "none";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+        }
+
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+
+        function sortTable(n, tableId) {
+            var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+            table = document.getElementById(tableId);
+            switching = true;
+            dir = "asc";
+            while (switching) {
+                switching = false;
+                rows = table.rows;
+                for (i = 1; i < (rows.length - 1); i++) {
+                    shouldSwitch = false;
+                    x = rows[i].getElementsByTagName("TD")[n];
+                    y = rows[i + 1].getElementsByTagName("TD")[n];
+
+                    var xContent = x.innerHTML;
+                    var yContent = y.innerHTML;
+
+                    var xVal, yVal;
+
+                    if (tableId === 'ordersTable' && n === 0) {
+                        xVal = new Date(xContent);
+                        yVal = new Date(yContent);
+                    } else {
+                        xVal = parseFloat(xContent.replace(/[^0-9.-]+/g, ""));
+                        yVal = parseFloat(yContent.replace(/[^0-9.-]+/g, ""));
+                    }
+
+                    if (dir == "asc") {
+                        if (xVal > yVal) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    } else if (dir == "desc") {
+                        if (xVal < yVal) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    }
+                }
+                if (shouldSwitch) {
+                    rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+                    switching = true;
+                    switchcount++;
+                } else {
+                    if (switchcount == 0 && dir == "asc") {
+                        dir = "desc";
+                        switching = true;
+                    }
+                }
+            }
+        }
+
+        const themeToggle = document.getElementById('theme-toggle');
+
+        function setTheme(theme) {
+            if (theme === 'dark-mode') {
+                document.body.classList.add('dark-mode');
+                themeToggle.innerHTML = '☀️';
+            } else {
+                document.body.classList.remove('dark-mode');
+                themeToggle.innerHTML = '💡';
+            }
+            localStorage.setItem('theme', theme);
+        }
+
+        let currentTheme = localStorage.getItem('theme');
+        if (!currentTheme) {
+            currentTheme = 'dark-mode';
+        }
+        setTheme(currentTheme);
+
+        themeToggle.addEventListener('click', () => {
+            let theme = document.body.classList.contains('dark-mode') ? 'light-mode' : 'dark-mode';
+            setTheme(theme);
+        });
+    </script>
+</body>
+
+</html>

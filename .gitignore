@@ -1,5 +1,4 @@
-# Ignore all html, csv, txt, and json files
-*.html
+# Ignore generated report files and credentials
 *.csv
 *.txt
 *.json
