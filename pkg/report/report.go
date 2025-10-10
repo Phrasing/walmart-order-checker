@@ -87,7 +87,7 @@ type ProductSummary struct {
 	PricePerUnit float64
 }
 
-func normalizeProductName(name string) string {
+func NormalizeProductName(name string) string {
 	normalized := strings.ToLower(name)
 	normalized = strings.ReplaceAll(normalized, "pokemon trading card games", "")
 	normalized = strings.ReplaceAll(normalized, "pokemon", "")
@@ -99,14 +99,14 @@ func normalizeProductName(name string) string {
 	return normalized
 }
 
-func formatOrderID(id string) string {
+func FormatOrderID(id string) string {
 	if len(id) > 7 && !strings.Contains(id, "-") {
 		return id[:7] + "-" + id[7:]
 	}
 	return id
 }
 
-func learnPrices(nonCanceledOrders []*Order) map[string]float64 {
+func LearnPrices(nonCanceledOrders []*Order) map[string]float64 {
 	learnedPrices := make(map[string]float64)
 	for _, order := range nonCanceledOrders {
 		if len(order.Items) > 0 {
@@ -139,7 +139,7 @@ func learnPrices(nonCanceledOrders []*Order) map[string]float64 {
 	return learnedPrices
 }
 
-func calculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]float64) map[string]*ProductSummary {
+func CalculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]float64) map[string]*ProductSummary {
 	productSummaryMap := make(map[string]*ProductSummary)
 	for _, order := range nonCanceledOrders {
 		for _, item := range order.Items {
@@ -160,7 +160,7 @@ func calculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]flo
 	return productSummaryMap
 }
 
-func calculateEmailStats(orders map[string]*Order, totalEmailsScanned int) EmailStats {
+func CalculateEmailStats(orders map[string]*Order, totalEmailsScanned int) EmailStats {
 	totalOrders := len(orders)
 	totalCanceled := 0
 	for _, order := range orders {
@@ -180,7 +180,7 @@ func calculateEmailStats(orders map[string]*Order, totalEmailsScanned int) Email
 	}
 }
 
-func calculateProductStats(orders map[string]*Order) []ProductStats {
+func CalculateProductStats(orders map[string]*Order) []ProductStats {
 	statsMap := make(map[string]*ProductStats)
 	for _, order := range orders {
 		for _, item := range order.Items {
@@ -208,7 +208,7 @@ func calculateProductStats(orders map[string]*Order) []ProductStats {
 	return stats
 }
 
-func prepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]float64) []OrderDetail {
+func PrepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]float64) []OrderDetail {
 	var orderDetails []OrderDetail
 	for _, order := range nonCanceledOrders {
 		for _, item := range order.Items {
@@ -220,7 +220,7 @@ func prepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]fl
 			}
 
 			orderDetails = append(orderDetails, OrderDetail{
-				OrderID:   formatOrderID(order.ID),
+				OrderID:   FormatOrderID(order.ID),
 				OrderDate: order.OrderDate,
 				ImageURL:  item.ImageURL,
 				Name:      item.Name,
@@ -240,7 +240,7 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	canonicalNames := make(map[string]string)
 	for _, order := range orders {
 		for i := range order.Items {
-			normalized := normalizeProductName(order.Items[i].Name)
+			normalized := NormalizeProductName(order.Items[i].Name)
 			if _, ok := canonicalNames[normalized]; !ok {
 				canonicalNames[normalized] = order.Items[i].Name
 			}
@@ -248,13 +248,13 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	}
 	for _, order := range orders {
 		for i := range order.Items {
-			normalized := normalizeProductName(order.Items[i].Name)
+			normalized := NormalizeProductName(order.Items[i].Name)
 			order.Items[i].Name = canonicalNames[normalized]
 		}
 	}
 
-	emailStats := calculateEmailStats(orders, totalEmailsScanned)
-	stats := calculateProductStats(orders)
+	emailStats := CalculateEmailStats(orders, totalEmailsScanned)
+	stats := CalculateProductStats(orders)
 
 	var nonCanceledOrders []*Order
 	for _, order := range orders {
@@ -267,8 +267,8 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 		return nonCanceledOrders[i].OrderDateParsed.Before(nonCanceledOrders[j].OrderDateParsed)
 	})
 
-	learnedPrices := learnPrices(nonCanceledOrders)
-	productSummaryMap := calculateSummaries(nonCanceledOrders, learnedPrices)
+	learnedPrices := LearnPrices(nonCanceledOrders)
+	productSummaryMap := CalculateSummaries(nonCanceledOrders, learnedPrices)
 
 	var productSummaries []ProductSummary
 	for _, summary := range productSummaryMap {
@@ -278,7 +278,7 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 		return productSummaries[i].TotalSpent > productSummaries[j].TotalSpent
 	})
 
-	orderDetails := prepareOrderDetails(nonCanceledOrders, learnedPrices)
+	orderDetails := PrepareOrderDetails(nonCanceledOrders, learnedPrices)
 
 	reportData := TemplateData{
 		Stats:            stats,
@@ -674,7 +674,7 @@ func GenerateCSV(orders map[string]*Order, path string) {
 	for _, order := range orders {
 		if order.Status != "canceled" {
 			for _, item := range order.Items {
-				writer.Write([]string{formatOrderID(order.ID), order.OrderDate, order.Total, item.Name, fmt.Sprintf("%d", item.Quantity)})
+				writer.Write([]string{FormatOrderID(order.ID), order.OrderDate, order.Total, item.Name, fmt.Sprintf("%d", item.Quantity)})
 			}
 		}
 	}
@@ -693,7 +693,7 @@ func GenerateShippedCSV(shippedOrders []*ShippedOrder, path string) {
 
 	writer.Write([]string{"Order ID", "Carrier", "Tracking #", "Estimated Arrival"})
 	for _, order := range shippedOrders {
-		writer.Write([]string{formatOrderID(order.ID), order.Carrier, order.TrackingNumber, order.EstimatedArrival})
+		writer.Write([]string{FormatOrderID(order.ID), order.Carrier, order.TrackingNumber, order.EstimatedArrival})
 	}
 	fmt.Printf("\nShipped orders have been written to %s\n", path)
 }
