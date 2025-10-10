@@ -1,4 +1,4 @@
-# Walmart Order Checker
+<h1 align="center">Walmart Order Checker</h1>
 
 <p align="center">
   <img width="460" src="./.github/assets/vA7eZV5g.png">
