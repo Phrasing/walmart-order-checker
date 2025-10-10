@@ -27,16 +27,7 @@ func getClient(config *oauth2.Config) *http.Client {
 	return config.Client(context.Background(), tok)
 }
 
-func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Println("Attempting to open the authorization link in your browser.")
-	fmt.Printf("If it doesn't open automatically, please go to this link:\n%v\n", authURL)
-
-	err := openBrowser(authURL)
-	if err != nil {
-		log.Printf("Failed to open browser: %v. Please open the URL manually.", err)
-	}
-
+func startOAuthWebServer(authURL string) string {
 	codeChan := make(chan string)
 	var once sync.Once
 
@@ -57,11 +48,25 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 		}
 	}()
 
+	err := openBrowser(authURL)
+	if err != nil {
+		log.Printf("Failed to open browser: %v. Please open the URL manually.", err)
+	}
+
 	authCode := <-codeChan
 
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Fatalf("Failed to shutdown server: %v", err)
 	}
+	return authCode
+}
+
+func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	fmt.Println("Attempting to open the authorization link in your browser.")
+	fmt.Printf("If it doesn't open automatically, please go to this link:\n%v\n", authURL)
+
+	authCode := startOAuthWebServer(authURL)
 
 	tok, err := config.Exchange(context.TODO(), authCode)
 	if err != nil {
@@ -109,35 +114,39 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
+func handleMissingCredentials() {
+	fmt.Printf("\n%s*** Welcome to Walmart Order Checker ***%s\n\n", "\033[32m", "\033[0m")
+	fmt.Printf("%sAction Required: `credentials.json` not found.%s\n", "\033[31m", "\033[0m")
+	fmt.Println("Please follow these steps to set up your credentials:")
+	fmt.Println("\033[33m" + "--------------------------------------------------------------------------------" + "\033[0m")
+	fmt.Printf("%sStep 1: Enable the Gmail API%s\n", "\033[36m", "\033[0m")
+	fmt.Println("   - Visit: https://console.cloud.google.com/marketplace/product/google/gmail.googleapis.com")
+	fmt.Println("   - Make sure you are logged into your Google account and have a project selected.")
+	fmt.Println()
+	fmt.Printf("%sStep 2: Create OAuth Credentials%s\n", "\033[36m", "\033[0m")
+	fmt.Println("   - Visit: https://console.cloud.google.com/auth/clients/create")
+	fmt.Println("   - Select 'Desktop app' as the application type.")
+	fmt.Println("   - Give it a name, like 'Walmart Order Checker Client'.")
+	fmt.Println("   - Click 'Create'.")
+	fmt.Println()
+	fmt.Printf("%sStep 3: Configure Consent Screen%s\n", "\033[36m", "\033[0m")
+	fmt.Println("   - You may be prompted to configure the consent screen.")
+	fmt.Println("   - Choose 'External' and provide an app name, support email, and contact email.")
+	fmt.Println("   - Add your email address as a 'Test user'.")
+	fmt.Println()
+	fmt.Printf("%sStep 4: Download and Save Credentials%s\n", "\033[36m", "\033[0m")
+	fmt.Println("   - Download the credentials file from the list.")
+	fmt.Println("   - Rename it to `credentials.json` and place it in the same folder as this tool.")
+	fmt.Println("\033[33m" + "--------------------------------------------------------------------------------" + "\033[0m")
+	fmt.Printf("%sOnce you've done this, please run the application again.%s\n\n", "\033[32m", "\033[0m")
+	os.Exit(1)
+}
+
 func InitializeGmailService() *gmail.Service {
 	credentials, err := os.ReadFile("credentials.json")
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("\n%s*** Welcome to Walmart Order Checker ***%s\n\n", "\033[32m", "\033[0m")
-			fmt.Printf("%sAction Required: `credentials.json` not found.%s\n", "\033[31m", "\033[0m")
-			fmt.Println("Please follow these steps to set up your credentials:")
-			fmt.Println("\033[33m" + "--------------------------------------------------------------------------------" + "\033[0m")
-			fmt.Printf("%sStep 1: Enable the Gmail API%s\n", "\033[36m", "\033[0m")
-			fmt.Println("   - Visit: https://console.cloud.google.com/marketplace/product/google/gmail.googleapis.com")
-			fmt.Println("   - Make sure you are logged into your Google account and have a project selected.")
-			fmt.Println()
-			fmt.Printf("%sStep 2: Create OAuth Credentials%s\n", "\033[36m", "\033[0m")
-			fmt.Println("   - Visit: https://console.cloud.google.com/auth/clients/create")
-			fmt.Println("   - Select 'Desktop app' as the application type.")
-			fmt.Println("   - Give it a name, like 'Walmart Order Checker Client'.")
-			fmt.Println("   - Click 'Create'.")
-			fmt.Println()
-			fmt.Printf("%sStep 3: Configure Consent Screen%s\n", "\033[36m", "\033[0m")
-			fmt.Println("   - You may be prompted to configure the consent screen.")
-			fmt.Println("   - Choose 'External' and provide an app name, support email, and contact email.")
-			fmt.Println("   - Add your email address as a 'Test user'.")
-			fmt.Println()
-			fmt.Printf("%sStep 4: Download and Save Credentials%s\n", "\033[36m", "\033[0m")
-			fmt.Println("   - Download the credentials file from the list.")
-			fmt.Println("   - Rename it to `credentials.json` and place it in the same folder as this tool.")
-			fmt.Println("\033[33m" + "--------------------------------------------------------------------------------" + "\033[0m")
-			fmt.Printf("%sOnce you've done this, please run the application again.%s\n\n", "\033[32m", "\033[0m")
-			os.Exit(1)
+			handleMissingCredentials()
 		}
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}

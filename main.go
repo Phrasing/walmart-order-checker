@@ -237,16 +237,6 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 					continue
 				}
 
-				var orderID string
-				var items []report.Item
-				var status string
-				var total string
-				var orderDate string
-				var parsedDate time.Time
-				var trackingNumber string
-				var carrier string
-				var estimatedArrival string
-
 				subject := ""
 				for _, h := range msg.Payload.Headers {
 					if h.Name == "Subject" {
@@ -256,92 +246,75 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 				}
 
 				if strings.Contains(subject, "Canceled") {
-					status = "canceled"
 					parts := strings.Split(subject, "#")
 					if len(parts) > 1 {
-						orderID = parts[1]
+						orderID := parts[1]
+						mu.Lock()
+						if existingOrder, ok := orders[orderID]; ok {
+							existingOrder.Status = "canceled"
+						} else {
+							orders[orderID] = &report.Order{ID: orderID, Status: "canceled"}
+						}
+						mu.Unlock()
 					}
 				} else if strings.Contains(subject, "Shipped") {
-					status = "shipped"
 					body := findHTMLPart(msg.Payload)
 					if body == "" {
 						log.Printf("Could not find HTML part for message %v", msgID)
 						continue
 					}
-
-					decodedBody, err := decodeBase64(body)
-					if err != nil {
-						log.Printf("Error decoding body for message %v: %v", msgID, err)
-						continue
-					}
-
-					doc, err := goquery.NewDocumentFromReader(strings.NewReader(decodedBody))
+					doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
 					if err != nil {
 						log.Printf("Error parsing HTML for message %v: %v", msgID, err)
 						continue
 					}
-
-					orderID = strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
+					orderID := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
 					orderID = strings.ReplaceAll(orderID, "-", "")
+					trackingNumber := doc.Find("span:contains('tracking number') a").Text()
+					carrierAndTracking := doc.Find("span:contains('tracking number')").Text()
+					re := regexp.MustCompile(`(\w+)\s+tracking\s+number`)
+					matches := re.FindStringSubmatch(carrierAndTracking)
+					var carrier string
+					if len(matches) > 1 {
+						carrier = matches[1]
+					}
+					estimatedArrival := doc.Find("strong:contains('Arrives')").Text()
 
-					doc.Find("span:contains('tracking number')").Each(func(i int, s *goquery.Selection) {
-						trackingNumber = s.Find("a").Text()
-						carrierAndTracking := s.Text()
-						re := regexp.MustCompile(`(\w+)\s+tracking\s+number`)
-						matches := re.FindStringSubmatch(carrierAndTracking)
-						if len(matches) > 1 {
-							carrier = matches[1]
+					mu.Lock()
+					if _, ok := shippedOrders[orderID]; !ok {
+						shippedOrders[orderID] = &report.ShippedOrder{
+							ID:               orderID,
+							TrackingNumber:   trackingNumber,
+							Carrier:          carrier,
+							EstimatedArrival: estimatedArrival,
 						}
-					})
-
-					doc.Find("strong:contains('Arrives')").Each(func(i int, s *goquery.Selection) {
-						estimatedArrival = s.Text()
-					})
-
+					}
+					mu.Unlock()
 				} else {
-					if strings.Contains(subject, "preorder") {
-						status = "pre-ordered"
-					} else {
-						status = "confirmed"
-					}
-
 					body := findHTMLPart(msg.Payload)
 					if body == "" {
 						log.Printf("Could not find HTML part for message %v", msgID)
 						continue
 					}
-
-					decodedBody, err := decodeBase64(body)
-					if err != nil {
-						log.Printf("Error decoding body for message %v: %v", msgID, err)
-						continue
-					}
-
-					doc, err := goquery.NewDocumentFromReader(strings.NewReader(decodedBody))
+					doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
 					if err != nil {
 						log.Printf("Error parsing HTML for message %v: %v", msgID, err)
 						continue
 					}
-
-					orderID = strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
+					orderID := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
 					orderID = strings.ReplaceAll(orderID, "-", "")
-
-					doc.Find("strong:contains('Includes all fees, taxes, discounts and driver tip')").Each(func(i int, s *goquery.Selection) {
-						total = s.Parent().Next().Find("strong").Text()
-					})
-
-					doc.Find("div:contains('Order date:')").Each(func(i int, s *goquery.Selection) {
-						dateText := s.Text()
-						if after, ok := strings.CutPrefix(dateText, " Order date:"); ok {
-							orderDate = strings.TrimSpace(after)
-							var err error
-							parsedDate, err = time.Parse("Mon, Jan 2, 2006", orderDate)
-							if err != nil {
-								log.Printf("Could not parse date for order %s: %v", orderID, err)
-							}
+					total := doc.Find("strong:contains('Includes all fees, taxes, discounts and driver tip')").Parent().Next().Find("strong").Text()
+					dateText := doc.Find("div:contains('Order date:')").Text()
+					var orderDate string
+					var parsedDate time.Time
+					if after, ok := strings.CutPrefix(dateText, " Order date:"); ok {
+						orderDate = strings.TrimSpace(after)
+						parsedDate, err = time.Parse("Mon, Jan 2, 2006", orderDate)
+						if err != nil {
+							log.Printf("Could not parse date for order %s: %v", orderID, err)
 						}
-					})
-
+					}
+					var items []report.Item
 					doc.Find("img[alt*='quantity']").Each(func(i int, s *goquery.Selection) {
 						altText := s.AttrOr("alt", "")
 						imageURL := s.AttrOr("src", "")
@@ -355,40 +328,26 @@ func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 							items = append(items, report.Item{Name: parts[1], Quantity: qty, ImageURL: imageURL})
 						}
 					})
-				}
-
-				if orderID != "" {
+					status := "confirmed"
+					if strings.Contains(subject, "preorder") {
+						status = "pre-ordered"
+					}
 					mu.Lock()
-					if status == "shipped" {
-						if _, ok := shippedOrders[orderID]; !ok {
-							shippedOrders[orderID] = &report.ShippedOrder{
-								ID:               orderID,
-								TrackingNumber:   trackingNumber,
-								Carrier:          carrier,
-								EstimatedArrival: estimatedArrival,
-							}
+					if existingOrder, ok := orders[orderID]; ok {
+						if len(existingOrder.Items) == 0 {
+							existingOrder.Items = items
+						}
+						if existingOrder.Status != "canceled" {
+							existingOrder.Status = status
 						}
 					} else {
-						if existingOrder, ok := orders[orderID]; ok {
-							if status == "canceled" {
-								existingOrder.Status = "canceled"
-							} else {
-								if len(existingOrder.Items) == 0 {
-									existingOrder.Items = items
-								}
-								if existingOrder.Status != "canceled" {
-									existingOrder.Status = status
-								}
-							}
-						} else {
-							orders[orderID] = &report.Order{
-								ID:              orderID,
-								Items:           items,
-								Total:           total,
-								OrderDate:       orderDate,
-								OrderDateParsed: parsedDate,
-								Status:          status,
-							}
+						orders[orderID] = &report.Order{
+							ID:              orderID,
+							Items:           items,
+							Total:           total,
+							OrderDate:       orderDate,
+							OrderDateParsed: parsedDate,
+							Status:          status,
 						}
 					}
 					mu.Unlock()
