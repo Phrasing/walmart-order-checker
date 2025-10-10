@@ -155,10 +155,7 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func main() {
-	flag.IntVar(&daysToScan, "days", 10, "Number of days back to scan for emails.")
-	flag.Parse()
-
+func initializeGmailService() *gmail.Service {
 	credentials, err := os.ReadFile("credentials.json")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -186,7 +183,7 @@ func main() {
 			fmt.Println("   - Rename it to `credentials.json` and place it in the same folder as this tool.")
 			fmt.Println(colorYellow + "--------------------------------------------------------------------------------" + colorReset)
 			fmt.Printf("%sOnce you've done this, please run the application again.%s\n\n", colorGreen, colorReset)
-			return
+			os.Exit(1)
 		}
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
@@ -201,15 +198,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("Unable to retrieve Gmail client: %v", err)
 	}
+	return srv
+}
 
-	user := "me"
-	profile, err := srv.Users.GetProfile(user).Do()
-	if err != nil {
-		log.Fatalf("Unable to retrieve user profile: %v", err)
-	}
-
-	query := fmt.Sprintf("from:help@walmart.com subject:(\"thanks for your preorder\" OR \"thanks for your order\" OR \"Canceled: delivery from order\" OR \"Shipped:\") newer_than:%dd", daysToScan)
-
+func fetchMessages(srv *gmail.Service, user string, query string) []*gmail.Message {
 	var allMessages []*gmail.Message
 	pageToken := ""
 	for {
@@ -229,7 +221,10 @@ func main() {
 		}
 		pageToken = r.NextPageToken
 	}
+	return allMessages
+}
 
+func processEmails(srv *gmail.Service, user string, allMessages []*gmail.Message) (map[string]*Order, map[string]*ShippedOrder) {
 	orders := make(map[string]*Order)
 	shippedOrders := make(map[string]*ShippedOrder)
 	var mu sync.Mutex
@@ -435,6 +430,24 @@ func main() {
 	close(jobs)
 
 	wg.Wait()
+	return orders, shippedOrders
+}
+
+func main() {
+	flag.IntVar(&daysToScan, "days", 10, "Number of days back to scan for emails.")
+	flag.Parse()
+
+	srv := initializeGmailService()
+
+	user := "me"
+	profile, err := srv.Users.GetProfile(user).Do()
+	if err != nil {
+		log.Fatalf("Unable to retrieve user profile: %v", err)
+	}
+
+	query := fmt.Sprintf("from:help@walmart.com subject:(\"thanks for your preorder\" OR \"thanks for your order\" OR \"Canceled: delivery from order\" OR \"Shipped:\") newer_than:%dd", daysToScan)
+	allMessages := fetchMessages(srv, user, query)
+	orders, shippedOrders := processEmails(srv, user, allMessages)
 
 	outDir := fmt.Sprintf("out/%s", profile.EmailAddress)
 	if _, err := os.Stat(outDir); os.IsNotExist(err) {
