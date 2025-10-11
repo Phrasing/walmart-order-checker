@@ -1,6 +1,7 @@
 package report
 
 import (
+	_ "embed"
 	"encoding/csv"
 	"fmt"
 	"html/template"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed template.html
+var templateHTML string
 
 // Order represents a Walmart order, including its ID, items, total cost, and status.
 type Order struct {
@@ -289,12 +293,7 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 		DateRange:        dateRangeStr,
 	}
 
-	tpl, err := os.ReadFile("pkg/report/template.html")
-	if err != nil {
-		log.Fatalf("Failed to read HTML template file: %v", err)
-	}
-
-	t, err := template.New("webpage").Parse(string(tpl))
+	t, err := template.New("webpage").Parse(templateHTML)
 	if err != nil {
 		log.Fatalf("Failed to parse HTML template: %v", err)
 	}

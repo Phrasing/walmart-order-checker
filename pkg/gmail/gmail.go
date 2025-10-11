@@ -307,14 +307,19 @@ func processOrderConfirmationEmail(msg *gmail.Message, subject string, orders ma
 	orderID = strings.ReplaceAll(orderID, "-", "")
 	total := doc.Find("strong:contains('Includes all fees, taxes, discounts and driver tip')").Parent().Next().Find("strong").Text()
 
-	dateText := doc.Find("div:contains('Order date:')").Text()
 	var orderDate string
 	var parsedDate time.Time
-	if after, ok := strings.CutPrefix(dateText, " Order date:"); ok {
-		orderDate = strings.TrimSpace(after)
-		parsedDate, err = time.Parse("Mon, Jan 2, 2006", orderDate)
-		if err != nil {
-			log.Printf("Could not parse date for order %s: %v", orderID, err)
+	dateText := doc.Find("div:contains('Order date:')").Text()
+	if dateText != "" {
+		re := regexp.MustCompile(`Order date:\s*(.*)`)
+		matches := re.FindStringSubmatch(dateText)
+		if len(matches) > 1 {
+			orderDate = strings.TrimSpace(matches[1])
+			var err error
+			parsedDate, err = time.Parse("Mon, Jan 2, 2006", orderDate)
+			if err != nil {
+				log.Printf("Could not parse date for order %s: %v", orderID, err)
+			}
 		}
 	}
 
