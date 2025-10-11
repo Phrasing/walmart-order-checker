@@ -3,6 +3,7 @@ package gmail
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -44,23 +45,20 @@ func findHTMLPart(part *gmail.MessagePart) string {
 }
 
 func decodeBase64(data string) (string, error) {
-	decoded, err := base64.URLEncoding.DecodeString(data)
-	if err == nil {
-		return string(decoded), nil
+	encodings := []base64.Encoding{
+		*base64.URLEncoding,
+		*base64.StdEncoding,
+		*base64.RawURLEncoding,
+		*base64.RawStdEncoding,
 	}
-	decoded, err = base64.StdEncoding.DecodeString(data)
-	if err == nil {
-		return string(decoded), nil
+
+	for _, enc := range encodings {
+		if decoded, err := enc.DecodeString(data); err == nil {
+			return string(decoded), nil
+		}
 	}
-	decoded, err = base64.RawURLEncoding.DecodeString(data)
-	if err == nil {
-		return string(decoded), nil
-	}
-	decoded, err = base64.RawStdEncoding.DecodeString(data)
-	if err == nil {
-		return string(decoded), nil
-	}
-	return "", err
+
+	return "", errors.New("failed to decode base64 with any encoding")
 }
 
 func getClient(config *oauth2.Config) *http.Client {
@@ -243,122 +241,175 @@ func processCanceledEmail(subject string, orders map[string]*report.Order) {
 }
 
 func processShippedEmail(msg *gmail.Message, shippedOrders map[string]*report.ShippedOrder) {
-	body := findHTMLPart(msg.Payload)
-	if body == "" {
-		log.Printf("Could not find HTML part for message %v", msg.Id)
-		return
-	}
-
-	decodedBody, err := decodeBase64(body)
+	doc, err := parseMessageHTML(msg)
 	if err != nil {
-		log.Printf("Error decoding body for message %v: %v", msg.Id, err)
+		log.Printf("Error processing message %v: %v", msg.Id, err)
 		return
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(decodedBody))
-	if err != nil {
-		log.Printf("Error parsing HTML for message %v: %v", msg.Id, err)
+	order := extractShippingInfo(doc)
+	if order.ID == "" {
+		log.Printf("Could not extract order ID from message %v", msg.Id)
 		return
 	}
 
-	orderID := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
-	orderID = strings.ReplaceAll(orderID, "-", "")
-
-	trackingNumber := doc.Find("span:contains('tracking number') a").Text()
-	carrierAndTracking := doc.Find("span:contains('tracking number')").Text()
-	re := regexp.MustCompile(`(\w+)\s+tracking\s+number`)
-	matches := re.FindStringSubmatch(carrierAndTracking)
-	var carrier string
-	if len(matches) > 1 {
-		carrier = matches[1]
-	}
-	estimatedArrival := doc.Find("strong:contains('Arrives')").Text()
-
-	if _, ok := shippedOrders[orderID]; !ok {
-		shippedOrders[orderID] = &report.ShippedOrder{
-			ID:               orderID,
-			TrackingNumber:   trackingNumber,
-			Carrier:          carrier,
-			EstimatedArrival: estimatedArrival,
-		}
+	if _, exists := shippedOrders[order.ID]; !exists {
+		shippedOrders[order.ID] = order
 	}
 }
 
-func processOrderConfirmationEmail(msg *gmail.Message, subject string, orders map[string]*report.Order) {
+func parseMessageHTML(msg *gmail.Message) (*goquery.Document, error) {
 	body := findHTMLPart(msg.Payload)
 	if body == "" {
-		log.Printf("Could not find HTML part for message %v", msg.Id)
-		return
+		return nil, fmt.Errorf("HTML part not found")
 	}
 
 	decodedBody, err := decodeBase64(body)
 	if err != nil {
-		log.Printf("Error decoding body for message %v: %v", msg.Id, err)
-		return
+		return nil, fmt.Errorf("decode failed: %w", err)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(decodedBody))
+	return goquery.NewDocumentFromReader(strings.NewReader(decodedBody))
+}
+
+func extractShippingInfo(doc *goquery.Document) *report.ShippedOrder {
+	orderID := strings.ReplaceAll(
+		strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text()),
+		"-", "",
+	)
+
+	carrier := extractCarrier(doc)
+
+	return &report.ShippedOrder{
+		ID:               orderID,
+		TrackingNumber:   doc.Find("span:contains('tracking number') a").Text(),
+		Carrier:          carrier,
+		EstimatedArrival: doc.Find("strong:contains('Arrives')").Text(),
+	}
+}
+
+func extractCarrier(doc *goquery.Document) string {
+	carrierText := doc.Find("span:contains('tracking number')").Text()
+	re := regexp.MustCompile(`(\w+)\s+tracking\s+number`)
+	if matches := re.FindStringSubmatch(carrierText); len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+func processOrderConfirmationEmail(msg *gmail.Message, subject string, orders map[string]*report.Order) {
+	doc, err := parseMessageHTML(msg)
 	if err != nil {
-		log.Printf("Error parsing HTML for message %v: %v", msg.Id, err)
+		log.Printf("Error processing message %v: %v", msg.Id, err)
 		return
 	}
 
-	orderID := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
-	orderID = strings.ReplaceAll(orderID, "-", "")
-	total := doc.Find("strong:contains('Includes all fees, taxes, discounts and driver tip')").Parent().Next().Find("strong").Text()
-
-	var orderDate string
-	var parsedDate time.Time
-	dateText := doc.Find("div:contains('Order date:')").Text()
-	if dateText != "" {
-		re := regexp.MustCompile(`Order date:\s*(.*)`)
-		matches := re.FindStringSubmatch(dateText)
-		if len(matches) > 1 {
-			orderDate = strings.TrimSpace(matches[1])
-			var err error
-			parsedDate, err = time.Parse("Mon, Jan 2, 2006", orderDate)
-			if err != nil {
-				log.Printf("Could not parse date for order %s: %v", orderID, err)
-			}
-		}
+	order := extractOrderInfo(doc, subject)
+	if order.ID == "" {
+		log.Printf("Could not extract order ID from message %v", msg.Id)
+		return
 	}
 
+	mergeOrCreateOrder(orders, order)
+}
+
+func extractOrderInfo(doc *goquery.Document, subject string) *report.Order {
+	orderID := strings.ReplaceAll(
+		strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text()),
+		"-", "",
+	)
+
+	orderDate, parsedDate := extractOrderDate(doc, orderID)
+
+	return &report.Order{
+		ID:              orderID,
+		Items:           extractItems(doc),
+		Total:           extractTotal(doc),
+		OrderDate:       orderDate,
+		OrderDateParsed: parsedDate,
+		Status:          determineStatus(subject),
+	}
+}
+
+func extractOrderDate(doc *goquery.Document, orderID string) (string, time.Time) {
+	dateText := doc.Find("div:contains('Order date:')").Text()
+	re := regexp.MustCompile(`Order date:\s*(.*)`)
+	matches := re.FindStringSubmatch(dateText)
+
+	if len(matches) <= 1 {
+		return "", time.Time{}
+	}
+
+	orderDate := strings.TrimSpace(matches[1])
+	parsedDate, err := time.Parse("Mon, Jan 2, 2006", orderDate)
+	if err != nil {
+		log.Printf("Could not parse date for order %s: %v", orderID, err)
+		return orderDate, time.Time{}
+	}
+
+	return orderDate, parsedDate
+}
+
+func extractTotal(doc *goquery.Document) string {
+	return doc.Find("strong:contains('Includes all fees, taxes, discounts and driver tip')").
+		Parent().
+		Next().
+		Find("strong").
+		Text()
+}
+
+func extractItems(doc *goquery.Document) []report.Item {
 	var items []report.Item
+
 	doc.Find("img[alt*='quantity']").Each(func(i int, s *goquery.Selection) {
-		altText := s.AttrOr("alt", "")
-		imageURL := s.AttrOr("src", "")
-		parts := strings.Split(altText, " item ")
-		if len(parts) == 2 {
-			qtyParts := strings.Split(parts[0], " ")
-			qty := 1
-			if len(qtyParts) > 1 {
-				fmt.Sscanf(qtyParts[1], "%d", &qty)
-			}
-			items = append(items, report.Item{Name: parts[1], Quantity: qty, ImageURL: imageURL})
+		if item, ok := parseItemFromImage(s); ok {
+			items = append(items, item)
 		}
 	})
 
-	status := "confirmed"
-	if strings.Contains(subject, "preorder") {
-		status = "pre-ordered"
+	return items
+}
+
+func parseItemFromImage(s *goquery.Selection) (report.Item, bool) {
+	altText := s.AttrOr("alt", "")
+	parts := strings.Split(altText, " item ")
+
+	if len(parts) != 2 {
+		return report.Item{}, false
 	}
 
-	if existingOrder, ok := orders[orderID]; ok {
-		if len(existingOrder.Items) == 0 {
-			existingOrder.Items = items
-		}
-		if existingOrder.Status != "canceled" {
-			existingOrder.Status = status
-		}
-	} else {
-		orders[orderID] = &report.Order{
-			ID:              orderID,
-			Items:           items,
-			Total:           total,
-			OrderDate:       orderDate,
-			OrderDateParsed: parsedDate,
-			Status:          status,
-		}
+	qty := 1
+	qtyParts := strings.Split(parts[0], " ")
+	if len(qtyParts) > 1 {
+		fmt.Sscanf(qtyParts[1], "%d", &qty)
+	}
+
+	return report.Item{
+		Name:     parts[1],
+		Quantity: qty,
+		ImageURL: s.AttrOr("src", ""),
+	}, true
+}
+
+func determineStatus(subject string) string {
+	if strings.Contains(subject, "preorder") {
+		return "pre-ordered"
+	}
+	return "confirmed"
+}
+
+func mergeOrCreateOrder(orders map[string]*report.Order, newOrder *report.Order) {
+	existing, exists := orders[newOrder.ID]
+	if !exists {
+		orders[newOrder.ID] = newOrder
+		return
+	}
+
+	if len(existing.Items) == 0 {
+		existing.Items = newOrder.Items
+	}
+	if existing.Status != "canceled" {
+		existing.Status = newOrder.Status
 	}
 }
 
@@ -380,11 +431,10 @@ func ProcessEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 			BarEnd:        "|",
 		}))
 
-	numWorkers := 10
 	jobs := make(chan string, len(allMessages))
 	var wg sync.WaitGroup
 
-	for range numWorkers {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -393,7 +443,7 @@ func ProcessEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 				if err != nil {
 					if strings.Contains(err.Error(), "rateLimitExceeded") {
 						log.Printf("Rate limit exceeded for message %v. Retrying after 1 second.", msgID)
-						time.Sleep(1 * time.Second)
+						time.Sleep(time.Second)
 						jobs <- msgID
 					} else {
 						log.Printf("Unable to retrieve message %v: %v", msgID, err)
@@ -401,20 +451,15 @@ func ProcessEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 					continue
 				}
 
-				subject := ""
-				for _, h := range msg.Payload.Headers {
-					if h.Name == "Subject" {
-						subject = h.Value
-						break
-					}
-				}
+				subject := getSubject(msg.Payload.Headers)
 
 				mu.Lock()
-				if strings.Contains(subject, "Canceled") {
+				switch {
+				case strings.Contains(subject, "Canceled"):
 					processCanceledEmail(subject, orders)
-				} else if strings.Contains(subject, "Shipped") {
+				case strings.Contains(subject, "Shipped"):
 					processShippedEmail(msg, shippedOrders)
-				} else {
+				default:
 					processOrderConfirmationEmail(msg, subject, orders)
 				}
 				mu.Unlock()
@@ -430,4 +475,13 @@ func ProcessEmails(srv *gmail.Service, user string, allMessages []*gmail.Message
 
 	wg.Wait()
 	return orders, shippedOrders
+}
+
+func getSubject(headers []*gmail.MessagePartHeader) string {
+	for _, h := range headers {
+		if h.Name == "Subject" {
+			return h.Value
+		}
+	}
+	return ""
 }

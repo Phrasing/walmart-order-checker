@@ -239,8 +239,42 @@ func PrepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]fl
 func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan int, path string, shippedOrders []*ShippedOrder) {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -daysToScan)
-	dateRangeStr := fmt.Sprintf("Email Scan Range: %s to %s (%d days)", startDate.Format("Jan 2, 2006"), endDate.Format("Jan 2, 2006"), daysToScan)
+	dateRangeStr := fmt.Sprintf("Email Scan Range: %s to %s (%d days)",
+		startDate.Format("Jan 2, 2006"), endDate.Format("Jan 2, 2006"), daysToScan)
 
+	normalizeProductNames(orders)
+
+	emailStats := CalculateEmailStats(orders, totalEmailsScanned)
+	stats := CalculateProductStats(orders)
+	nonCanceledOrders := filterNonCanceled(orders)
+	learnedPrices := LearnPrices(nonCanceledOrders)
+	productSummaries := buildProductSummaries(nonCanceledOrders, learnedPrices)
+	orderDetails := PrepareOrderDetails(nonCanceledOrders, learnedPrices)
+
+	reportData := TemplateData{
+		Stats:            stats,
+		EmailStats:       emailStats,
+		Orders:           orderDetails,
+		ShippedOrders:    shippedOrders,
+		ProductSummaries: productSummaries,
+		DateRange:        dateRangeStr,
+	}
+
+	t := template.Must(template.New("webpage").Parse(templateHTML))
+
+	f, err := os.Create(path)
+	if err != nil {
+		log.Fatalf("Failed to create HTML file: %v", err)
+	}
+
+	defer f.Close()
+
+	if err := t.Execute(f, reportData); err != nil {
+		log.Fatalf("Failed to execute template: %v", err)
+	}
+}
+
+func normalizeProductNames(orders map[string]*Order) {
 	canonicalNames := make(map[string]string)
 	for _, order := range orders {
 		for i := range order.Items {
@@ -256,58 +290,31 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 			order.Items[i].Name = canonicalNames[normalized]
 		}
 	}
+}
 
-	emailStats := CalculateEmailStats(orders, totalEmailsScanned)
-	stats := CalculateProductStats(orders)
-
-	var nonCanceledOrders []*Order
+func filterNonCanceled(orders map[string]*Order) []*Order {
+	var result []*Order
 	for _, order := range orders {
 		if order.Status != "canceled" {
-			nonCanceledOrders = append(nonCanceledOrders, order)
+			result = append(result, order)
 		}
 	}
-
-	sort.Slice(nonCanceledOrders, func(i, j int) bool {
-		return nonCanceledOrders[i].OrderDateParsed.Before(nonCanceledOrders[j].OrderDateParsed)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].OrderDateParsed.Before(result[j].OrderDateParsed)
 	})
+	return result
+}
 
-	learnedPrices := LearnPrices(nonCanceledOrders)
-	productSummaryMap := CalculateSummaries(nonCanceledOrders, learnedPrices)
-
-	var productSummaries []ProductSummary
-	for _, summary := range productSummaryMap {
-		productSummaries = append(productSummaries, *summary)
+func buildProductSummaries(orders []*Order, learnedPrices map[string]float64) []ProductSummary {
+	summaryMap := CalculateSummaries(orders, learnedPrices)
+	summaries := make([]ProductSummary, 0, len(summaryMap))
+	for _, summary := range summaryMap {
+		summaries = append(summaries, *summary)
 	}
-	sort.Slice(productSummaries, func(i, j int) bool {
-		return productSummaries[i].TotalSpent > productSummaries[j].TotalSpent
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].TotalSpent > summaries[j].TotalSpent
 	})
-
-	orderDetails := PrepareOrderDetails(nonCanceledOrders, learnedPrices)
-
-	reportData := TemplateData{
-		Stats:            stats,
-		EmailStats:       emailStats,
-		Orders:           orderDetails,
-		ShippedOrders:    shippedOrders,
-		ProductSummaries: productSummaries,
-		DateRange:        dateRangeStr,
-	}
-
-	t, err := template.New("webpage").Parse(templateHTML)
-	if err != nil {
-		log.Fatalf("Failed to parse HTML template: %v", err)
-	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		log.Fatalf("Failed to create HTML file: %v", err)
-	}
-	defer f.Close()
-
-	err = t.Execute(f, reportData)
-	if err != nil {
-		log.Fatalf("Failed to execute template: %v", err)
-	}
+	return summaries
 }
 
 func GenerateCSV(orders map[string]*Order, path string) {

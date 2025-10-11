@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"walmart-order-checker/pkg/gmail"
@@ -51,5 +52,10 @@ func main() {
 	report.GenerateShippedCSV(shippedOrdersSlice, shippedCsvPath)
 
 	fmt.Printf("HTML report has been generated: %s\n", htmlPath)
-	gmail.OpenBrowser(htmlPath)
+	absPath, err := filepath.Abs(htmlPath)
+	if err != nil {
+		log.Printf("Could not get absolute path for %s: %v", htmlPath, err)
+		return
+	}
+	gmail.OpenBrowser(absPath)
 }
