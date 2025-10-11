@@ -93,9 +93,10 @@ func getClient(config *oauth2.Config) (*http.Client, error) {
 func startOAuthWebServer(authURL string) (string, error) {
 	codeChan := make(chan string, 1)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	const listenAddr = "127.0.0.1:80"
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return "", fmt.Errorf("listen: %w", err)
+		return "", fmt.Errorf("listen on %s: %w", listenAddr, err)
 	}
 	addr := ln.Addr().String()
 
