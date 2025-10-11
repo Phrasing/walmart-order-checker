@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"html/template"
-	"log"
 	"os"
 	"regexp"
 	"sort"
@@ -17,7 +16,6 @@ import (
 //go:embed template.html
 var templateHTML string
 
-// Order represents a Walmart order, including its ID, items, total cost, and status.
 type Order struct {
 	ID               string
 	Items            []Item
@@ -30,7 +28,6 @@ type Order struct {
 	EstimatedArrival string
 }
 
-// ShippedOrder represents a shipped order with its tracking information.
 type ShippedOrder struct {
 	ID               string
 	TrackingNumber   string
@@ -38,14 +35,12 @@ type ShippedOrder struct {
 	EstimatedArrival string
 }
 
-// Item represents a single item within a Walmart order.
 type Item struct {
 	Name     string
 	Quantity int
 	ImageURL string
 }
 
-// ProductStats holds cancellation statistics for a product.
 type ProductStats struct {
 	Name          string
 	ImageURL      string
@@ -54,7 +49,6 @@ type ProductStats struct {
 	CancelRate    float64
 }
 
-// EmailStats holds overall statistics about the email scan.
 type EmailStats struct {
 	TotalEmailsScanned int
 	TotalOrders        int
@@ -62,7 +56,6 @@ type EmailStats struct {
 	CancellationRate   float64
 }
 
-// TemplateData is the struct passed to the HTML template.
 type TemplateData struct {
 	Stats            []ProductStats
 	EmailStats       EmailStats
@@ -72,7 +65,6 @@ type TemplateData struct {
 	DateRange        string
 }
 
-// OrderDetail represents a single order item for display in the HTML report.
 type OrderDetail struct {
 	OrderID   string
 	OrderDate string
@@ -82,7 +74,6 @@ type OrderDetail struct {
 	Total     string
 }
 
-// ProductSummary provides a summary of spending and units for a single product.
 type ProductSummary struct {
 	Name         string
 	ImageURL     string
@@ -91,6 +82,8 @@ type ProductSummary struct {
 	PricePerUnit float64
 }
 
+var nonAlnum = regexp.MustCompile("[^a-z0-9]+")
+
 func NormalizeProductName(name string) string {
 	normalized := strings.ToLower(name)
 	normalized = strings.ReplaceAll(normalized, "pokemon trading card games", "")
@@ -98,8 +91,7 @@ func NormalizeProductName(name string) string {
 	normalized = strings.ReplaceAll(normalized, "scarlett violet", "sv")
 	normalized = strings.ReplaceAll(normalized, "evolutions", "evo")
 	normalized = strings.ReplaceAll(normalized, "suprise", "surprise")
-	reg, _ := regexp.Compile("[^a-z0-9]+")
-	normalized = reg.ReplaceAllString(normalized, "")
+	normalized = nonAlnum.ReplaceAllString(normalized, "")
 	return normalized
 }
 
@@ -111,57 +103,58 @@ func FormatOrderID(id string) string {
 }
 
 func LearnPrices(nonCanceledOrders []*Order) map[string]float64 {
-	learnedPrices := make(map[string]float64)
+	learned := make(map[string]float64)
 	for _, order := range nonCanceledOrders {
-		if len(order.Items) > 0 {
-			isSingleItemType := true
-			firstItemName := order.Items[0].Name
-			for i := 1; i < len(order.Items); i++ {
-				if order.Items[i].Name != firstItemName {
-					isSingleItemType = false
-					break
-				}
-			}
-
-			if isSingleItemType {
-				if _, ok := learnedPrices[firstItemName]; !ok {
-					totalString := strings.ReplaceAll(order.Total, "$", "")
-					totalString = strings.ReplaceAll(totalString, ",", "")
-					if totalFloat, err := strconv.ParseFloat(totalString, 64); err == nil {
-						totalQuantity := 0
-						for _, item := range order.Items {
-							totalQuantity += item.Quantity
-						}
-						if totalQuantity > 0 {
-							learnedPrices[firstItemName] = totalFloat / float64(totalQuantity)
-						}
-					}
-				}
+		if len(order.Items) == 0 {
+			continue
+		}
+		same := true
+		first := order.Items[0].Name
+		for i := 1; i < len(order.Items); i++ {
+			if order.Items[i].Name != first {
+				same = false
+				break
 			}
 		}
+		if !same {
+			continue
+		}
+		if _, ok := learned[first]; ok {
+			continue
+		}
+		totalString := strings.ReplaceAll(order.Total, "$", "")
+		totalString = strings.ReplaceAll(totalString, ",", "")
+		totalFloat, err := strconv.ParseFloat(totalString, 64)
+		if err != nil {
+			continue
+		}
+		totalQty := 0
+		for _, item := range order.Items {
+			totalQty += item.Quantity
+		}
+		if totalQty > 0 {
+			learned[first] = totalFloat / float64(totalQty)
+		}
 	}
-	return learnedPrices
+	return learned
 }
 
 func CalculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]float64) map[string]*ProductSummary {
-	productSummaryMap := make(map[string]*ProductSummary)
+	m := make(map[string]*ProductSummary)
 	for _, order := range nonCanceledOrders {
 		for _, item := range order.Items {
-			if _, ok := productSummaryMap[item.Name]; !ok {
-				productSummaryMap[item.Name] = &ProductSummary{
-					Name:     item.Name,
-					ImageURL: item.ImageURL,
-				}
+			if _, ok := m[item.Name]; !ok {
+				m[item.Name] = &ProductSummary{Name: item.Name, ImageURL: item.ImageURL}
 			}
-			summary := productSummaryMap[item.Name]
-			summary.TotalUnits += item.Quantity
+			s := m[item.Name]
+			s.TotalUnits += item.Quantity
 			if price, ok := learnedPrices[item.Name]; ok {
-				summary.PricePerUnit = price
-				summary.TotalSpent = price * float64(summary.TotalUnits)
+				s.PricePerUnit = price
+				s.TotalSpent = price * float64(s.TotalUnits)
 			}
 		}
 	}
-	return productSummaryMap
+	return m
 }
 
 func CalculateEmailStats(orders map[string]*Order, totalEmailsScanned int) EmailStats {
@@ -174,7 +167,7 @@ func CalculateEmailStats(orders map[string]*Order, totalEmailsScanned int) Email
 	}
 	var cancelRate float64
 	if totalOrders > 0 {
-		cancelRate = (float64(totalCanceled) / float64(totalOrders)) * 100
+		cancelRate = float64(totalCanceled) / float64(totalOrders) * 100
 	}
 	return EmailStats{
 		TotalEmailsScanned: totalEmailsScanned,
@@ -197,33 +190,26 @@ func CalculateProductStats(orders map[string]*Order) []ProductStats {
 			}
 		}
 	}
-
 	var stats []ProductStats
 	for _, stat := range statsMap {
 		if stat.TotalOrdered > 0 {
-			stat.CancelRate = (float64(stat.TotalCanceled) / float64(stat.TotalOrdered)) * 100
+			stat.CancelRate = float64(stat.TotalCanceled) / float64(stat.TotalOrdered) * 100
 		}
 		stats = append(stats, *stat)
 	}
-
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].CancelRate > stats[j].CancelRate
-	})
+	sort.Slice(stats, func(i, j int) bool { return stats[i].CancelRate > stats[j].CancelRate })
 	return stats
 }
 
 func PrepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]float64) []OrderDetail {
-	var orderDetails []OrderDetail
+	var out []OrderDetail
 	for _, order := range nonCanceledOrders {
 		for _, item := range order.Items {
-			var totalStr string
+			totalStr := order.Total
 			if price, ok := learnedPrices[item.Name]; ok {
 				totalStr = fmt.Sprintf("$%.2f", price*float64(item.Quantity))
-			} else {
-				totalStr = order.Total // Fallback for orders with unknown prices
 			}
-
-			orderDetails = append(orderDetails, OrderDetail{
+			out = append(out, OrderDetail{
 				OrderID:   FormatOrderID(order.ID),
 				OrderDate: order.OrderDate,
 				ImageURL:  item.ImageURL,
@@ -233,25 +219,28 @@ func PrepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]fl
 			})
 		}
 	}
-	return orderDetails
+	return out
 }
 
-func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan int, path string, shippedOrders []*ShippedOrder) {
+func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan int, path string, shippedOrders []*ShippedOrder) error {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -daysToScan)
-	dateRangeStr := fmt.Sprintf("Email Scan Range: %s to %s (%d days)",
-		startDate.Format("Jan 2, 2006"), endDate.Format("Jan 2, 2006"), daysToScan)
+	dateRangeStr := fmt.Sprintf(
+		"Email Scan Range: %s to %s (%d days)",
+		startDate.Format("Jan 2, 2006"),
+		endDate.Format("Jan 2, 2006"),
+		daysToScan,
+	)
 
 	normalizeProductNames(orders)
-
 	emailStats := CalculateEmailStats(orders, totalEmailsScanned)
 	stats := CalculateProductStats(orders)
-	nonCanceledOrders := filterNonCanceled(orders)
-	learnedPrices := LearnPrices(nonCanceledOrders)
-	productSummaries := buildProductSummaries(nonCanceledOrders, learnedPrices)
-	orderDetails := PrepareOrderDetails(nonCanceledOrders, learnedPrices)
+	nonCanceled := filterNonCanceled(orders)
+	learned := LearnPrices(nonCanceled)
+	productSummaries := buildProductSummaries(nonCanceled, learned)
+	orderDetails := PrepareOrderDetails(nonCanceled, learned)
 
-	reportData := TemplateData{
+	data := TemplateData{
 		Stats:            stats,
 		EmailStats:       emailStats,
 		Orders:           orderDetails,
@@ -261,33 +250,31 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	}
 
 	t := template.Must(template.New("webpage").Parse(templateHTML))
-
 	f, err := os.Create(path)
 	if err != nil {
-		log.Fatalf("Failed to create HTML file: %v", err)
+		return fmt.Errorf("create html: %w", err)
 	}
-
 	defer f.Close()
-
-	if err := t.Execute(f, reportData); err != nil {
-		log.Fatalf("Failed to execute template: %v", err)
+	if err := t.Execute(f, data); err != nil {
+		return fmt.Errorf("execute template: %w", err)
 	}
+	return nil
 }
 
 func normalizeProductNames(orders map[string]*Order) {
-	canonicalNames := make(map[string]string)
+	canonical := make(map[string]string)
 	for _, order := range orders {
 		for i := range order.Items {
-			normalized := NormalizeProductName(order.Items[i].Name)
-			if _, ok := canonicalNames[normalized]; !ok {
-				canonicalNames[normalized] = order.Items[i].Name
+			norm := NormalizeProductName(order.Items[i].Name)
+			if _, ok := canonical[norm]; !ok {
+				canonical[norm] = order.Items[i].Name
 			}
 		}
 	}
 	for _, order := range orders {
 		for i := range order.Items {
-			normalized := NormalizeProductName(order.Items[i].Name)
-			order.Items[i].Name = canonicalNames[normalized]
+			norm := NormalizeProductName(order.Items[i].Name)
+			order.Items[i].Name = canonical[norm]
 		}
 	}
 }
@@ -306,51 +293,80 @@ func filterNonCanceled(orders map[string]*Order) []*Order {
 }
 
 func buildProductSummaries(orders []*Order, learnedPrices map[string]float64) []ProductSummary {
-	summaryMap := CalculateSummaries(orders, learnedPrices)
-	summaries := make([]ProductSummary, 0, len(summaryMap))
-	for _, summary := range summaryMap {
-		summaries = append(summaries, *summary)
+	m := CalculateSummaries(orders, learnedPrices)
+	out := make([]ProductSummary, 0, len(m))
+	for _, s := range m {
+		out = append(out, *s)
 	}
-	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].TotalSpent > summaries[j].TotalSpent
-	})
-	return summaries
+	sort.Slice(out, func(i, j int) bool { return out[i].TotalSpent > out[j].TotalSpent })
+	return out
 }
 
-func GenerateCSV(orders map[string]*Order, path string) {
-	file, err := os.Create(path)
+func GenerateCSV(orders map[string]*Order, path string) error {
+	f, err := os.Create(path)
 	if err != nil {
-		log.Fatalf("Failed to create CSV file: %v", err)
+		return fmt.Errorf("create csv: %w", err)
 	}
-	defer file.Close()
+	defer f.Close()
 
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
+	w := csv.NewWriter(f)
+	defer w.Flush()
 
-	writer.Write([]string{"Order ID", "Order Date", "Order Total", "Item Name", "Quantity"})
+	if err := w.Write([]string{"Order ID", "Order Date", "Order Total", "Item Name", "Quantity"}); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+
 	for _, order := range orders {
-		if order.Status != "canceled" {
-			for _, item := range order.Items {
-				writer.Write([]string{FormatOrderID(order.ID), order.OrderDate, order.Total, item.Name, fmt.Sprintf("%d", item.Quantity)})
+		if order.Status == "canceled" {
+			continue
+		}
+		for _, item := range order.Items {
+			rec := []string{
+				FormatOrderID(order.ID),
+				order.OrderDate,
+				order.Total,
+				item.Name,
+				fmt.Sprintf("%d", item.Quantity),
+			}
+			if err := w.Write(rec); err != nil {
+				return fmt.Errorf("write row: %w", err)
 			}
 		}
 	}
-	fmt.Printf("\nNon-canceled orders have been written to %s\n", path)
+
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("flush: %w", err)
+	}
+
+	return nil
 }
 
-func GenerateShippedCSV(shippedOrders []*ShippedOrder, path string) {
-	file, err := os.Create(path)
+func GenerateShippedCSV(shippedOrders []*ShippedOrder, path string) error {
+	f, err := os.Create(path)
 	if err != nil {
-		log.Fatalf("Failed to create CSV file: %v", err)
+		return fmt.Errorf("create csv: %w", err)
 	}
-	defer file.Close()
+	defer f.Close()
 
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
+	w := csv.NewWriter(f)
+	defer w.Flush()
 
-	writer.Write([]string{"Order ID", "Carrier", "Tracking #", "Estimated Arrival"})
+	if err := w.Write([]string{"Order ID", "Carrier", "Tracking #", "Estimated Arrival"}); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
 	for _, order := range shippedOrders {
-		writer.Write([]string{FormatOrderID(order.ID), order.Carrier, order.TrackingNumber, order.EstimatedArrival})
+		rec := []string{
+			FormatOrderID(order.ID),
+			order.Carrier,
+			order.TrackingNumber,
+			order.EstimatedArrival,
+		}
+		if err := w.Write(rec); err != nil {
+			return fmt.Errorf("write row: %w", err)
+		}
 	}
-	fmt.Printf("\nShipped orders have been written to %s\n", path)
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("flush: %w", err)
+	}
+	return nil
 }
