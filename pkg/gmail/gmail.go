@@ -122,21 +122,18 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 }
 
 func OpenBrowser(url string) error {
-	var cmd string
-	var args []string
-
+	var err error
 	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
 	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start"}
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	case "darwin":
-		cmd = "open"
+		err = exec.Command("open", url).Start()
 	default:
-		cmd = "xdg-open"
+		err = fmt.Errorf("unsupported platform")
 	}
-
-	args = append(args, url)
-	return exec.Command(cmd, args...).Start()
+	return err
 }
 
 func tokenFromFile(file string) (*oauth2.Token, error) {
