@@ -1,6 +1,7 @@
 package gmail
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -172,7 +173,16 @@ func InitializeGmailService() (*gm.Service, error) {
 	credentials, err := os.ReadFile("credentials.json")
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("credentials.json not found")
+			fmt.Println("Error: credentials.json not found.")
+			fmt.Println("\nPlease follow these steps to set up your credentials:")
+			fmt.Println("1. Go to the Google Cloud Console and create a new project.")
+			fmt.Println("2. Enable the Gmail API for your project.")
+			fmt.Println("3. Create an OAuth 2.0 Client ID for a 'Desktop app'.")
+			fmt.Println("4. Download the JSON file, rename it to 'credentials.json',")
+			fmt.Println("   and place it in the same directory as this executable.")
+			fmt.Println("\nPress 'Enter' to exit.")
+			bufio.NewReader(os.Stdin).ReadBytes('\n')
+			return nil, errors.New("credentials.json not found, please set it up")
 		}
 		return nil, fmt.Errorf("read credentials: %w", err)
 	}
