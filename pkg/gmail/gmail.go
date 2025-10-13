@@ -274,12 +274,9 @@ func extractShippingInfo(doc *goquery.Document) []*report.ShippedOrder {
 
 	// Pair up tracking numbers and arrival dates.
 	// This assumes a 1:1 correspondence and order, which is typical for these emails.
-	count := len(trackingNumbers)
-	if len(arrivalDates) < count {
-		count = len(arrivalDates)
-	}
+	count := min(len(arrivalDates), len(trackingNumbers))
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if trackingNumbers[i] == "" {
 			continue
 		}
@@ -358,10 +355,14 @@ func parseItemFromImage(s *goquery.Selection) (report.Item, bool) {
 	if len(qtyParts) > 1 {
 		_, _ = fmt.Sscanf(qtyParts[1], "%d", &qty)
 	}
+	imageURL := s.AttrOr("src", "")
+	if imageURL != "" {
+		imageURL = fmt.Sprintf("https://images.weserv.nl/?url=%s&trim=10&bg=00000000", imageURL)
+	}
 	return report.Item{
 		Name:     parts[1],
 		Quantity: qty,
-		ImageURL: s.AttrOr("src", ""),
+		ImageURL: imageURL,
 	}, true
 }
 

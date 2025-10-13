@@ -1,375 +1,599 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 
 <head>
-    <title>Walmart Orders</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Walmart Order Checker</title>
+
+    <!-- Inter variable via Google Fonts (falls back to system if blocked) -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300..700&display=swap" rel="stylesheet">
+
+    <script>
+        function filterAllTables() {
+            const input = document.getElementById('globalSearch');
+            const filter = input.value.toLowerCase();
+            const tableIds = ['spendTable', 'cancelTable', 'ordersTable', 'liveTable'];
+
+            tableIds.forEach(tableId => {
+                const table = document.getElementById(tableId);
+                if (!table) return;
+
+                const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+                for (let i = 0; i < rows.length; i++) {
+                    const cells = rows[i].getElementsByTagName('td');
+                    let found = false;
+
+                    for (let j = 0; j < cells.length; j++) {
+                        const cellText = cells[j].textContent || cells[j].innerText;
+                        if (cellText.toLowerCase().indexOf(filter) > -1) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    rows[i].style.display = found ? '' : 'none';
+                }
+            });
+        }
+    </script>
+
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
-            background-color: #f4f4f4;
-            color: #333;
-            margin: 0;
-            padding: 20px;
-            transition: background-color 0.3s, color 0.3s;
+        :root {
+            /* Dark theme tokens */
+            --bg: #0b0c0f;
+            --panel: #111318;
+            --muted: #99a2b3;
+            --text: #e6e9ef;
+            --primary: #7aa2f7;
+            --border: #1b1e26;
+            --accent: #1e293b;
+            --success: #34d399;
+            --warning: #f59e0b;
+            --danger: #f87171;
+
+            --radius: 12px;
+            --radius-sm: 8px;
+
+            --shadow-1: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 12px rgba(0, 0, 0, .25);
+
+            /* Typography */
+            --font-sans: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
+                "Segoe UI Emoji", "Segoe UI Symbol", system-ui, sans-serif;
+            --fs-xxs: 11px;
+            --fs-xs: 12px;
+            --fs-sm: 13px;
+            --fs-md: 14px;
+            --fs-lg: 16px;
+            --fs-xl: 18px;
+            --lh: 1.45;
+
+            /* Layout */
+            --container: 1280px;
+            --gap: 20px;
+            --pad: 16px;
         }
 
-        .dark-mode {
-            background-color: #121212;
-            color: #e0e0e0;
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: #f7f8fb;
+                --panel: #ffffff;
+                --muted: #64748b;
+                --text: #0f172a;
+                --primary: #2563eb;
+                --border: #e5e7eb;
+                --accent: #f1f5f9;
+                --shadow-1: 0 1px 2px rgba(0, 0, 0, .06), 0 8px 24px rgba(0, 0, 0, .06);
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-sans);
+            font-size: var(--fs-md);
+            line-height: var(--lh);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: var(--container);
             margin: 0 auto;
-            background-color: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            transition: background-color 0.3s;
-            position: relative;
+            padding: 32px 24px 64px;
         }
 
-        .dark-mode .container {
-            background-color: #1e1e1e;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--gap);
+            margin-bottom: 28px;
+        }
+
+        .title {
+            font-size: 26px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 4px;
+        }
+
+        .subtle {
+            color: var(--muted);
+            font-size: var(--fs-sm);
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-1);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-weight: 600;
+            font-size: var(--fs-lg);
+        }
+
+        .card-body {
+            padding: 20px;
+        }
+
+        /* Responsive table container */
+        .table-wrap {
+            width: 100%;
+            overflow: auto;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--panel);
         }
 
         table {
-            border-collapse: collapse;
             width: 100%;
-            margin-top: 20px;
+            border-collapse: collapse;
+            min-width: 720px;
         }
 
-        th,
-        td {
-            border: 1px solid #ddd;
-            padding: 8px;
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--panel);
+            color: var(--muted);
             text-align: left;
+            font-weight: 600;
+            font-size: var(--fs-sm);
+            letter-spacing: 0.01em;
+            border-bottom: 1px solid var(--border);
+            padding: 12px 14px;
+            white-space: nowrap;
         }
 
-        .dark-mode th,
-        .dark-mode td {
-            border-color: #444;
+        tbody td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
         }
 
-        th {
-            background-color: #f2f2f2;
-            cursor: pointer;
+        tbody tr:last-child td {
+            border-bottom: none;
         }
 
-        .dark-mode th {
-            background-color: #333;
+        tbody tr:hover td {
+            background: rgba(122, 162, 247, 0.08);
         }
 
-        img {
-            max-width: 50px;
-            max-height: 50px;
+        .num {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
         }
 
-        h1 {
+        .mono {
+            font-variant-numeric: tabular-nums;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: var(--fs-sm);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: var(--fs-xs);
+            border: 1px solid var(--border);
+            background: var(--accent);
+            color: var(--text);
+        }
+
+        .badge.success {
+            color: var(--success);
+        }
+
+        .badge.warn {
+            color: var(--warning);
+        }
+
+        .badge.danger {
+            color: var(--danger);
+        }
+
+        .thumb {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #0a0b0e;
+            border: 1px solid var(--border);
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            gap: var(--gap);
+        }
+
+        @media (min-width: 900px) {
+            .grid.cols-2 {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .kpi {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: var(--gap);
+        }
+
+        .kpi .item {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow-1);
             text-align: center;
         }
 
-        #theme-toggle {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: none;
-            border: none;
-            font-size: 24px;
-            cursor: pointer;
+        .kpi .icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+            line-height: 1;
         }
 
-        .tab {
-            overflow: hidden;
-            border-bottom: 1px solid #ccc;
+        .kpi .label {
+            color: var(--muted);
+            font-size: var(--fs-xs);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: .06em;
         }
 
-        .dark-mode .tab {
-            border-bottom: 1px solid #444;
+        .kpi .value {
+            font-size: 28px;
+            font-weight: 600;
+            color: var(--primary);
         }
 
-        .tab button {
-            background-color: inherit;
-            float: left;
-            border: none;
+        .note {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: var(--fs-sm);
+            line-height: 1.5;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .pill {
+            border: 1px solid var(--border);
+            background: var(--accent);
+            color: var(--text);
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: var(--fs-sm);
+            cursor: default;
+            font-weight: 500;
+        }
+
+        .help {
+            font-size: var(--fs-xs);
+            color: var(--muted);
+        }
+
+        .section-spacing {
+            margin-top: 24px;
+        }
+
+        .search-box {
+            margin-bottom: 0;
+        }
+
+        .search-input {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px 14px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            font-size: var(--fs-md);
+            font-family: var(--font-sans);
             outline: none;
-            cursor: pointer;
-            padding: 14px 16px;
-            transition: 0.3s;
-            font-size: 17px;
-            color: inherit;
-            border-bottom: 3px solid transparent;
+            transition: border-color 0.2s;
         }
 
-        .tab button:hover {
-            opacity: 0.7;
+        .search-input:focus {
+            border-color: var(--primary);
         }
 
-        .tab button.active {
-            border-bottom: 3px solid #007bff;
+        .search-input::placeholder {
+            color: var(--muted);
         }
 
-        .tabcontent {
-            display: none;
-            padding: 20px 0;
+        @media (max-width: 768px) {
+            .container {
+                padding: 24px 16px;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+
+            .kpi {
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            }
+
+            .kpi .value {
+                font-size: 22px;
+            }
+
+            .actions {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .search-input {
+                max-width: 100%;
+            }
         }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <button id="theme-toggle">💡</button>
+        <header>
+            <div>
+                <div class="title">Walmart Order Checker</div>
+                <div class="subtle">{{.DateRange}}</div>
+            </div>
+            <div class="search-box">
+                <input type="text" id="globalSearch" class="search-input" placeholder="Search products..."
+                    onkeyup="filterAllTables()">
+            </div>
+        </header>
 
-        <div class="tab">
-            <button class="tablinks active" onclick="openTab(event, 'OverallStats')">Overall Statistics</button>
-            <button class="tablinks" onclick="openTab(event, 'CancellationStats')">Cancellation Statistics</button>
-            <button class="tablinks" onclick="openTab(event, 'Orders')">Non-Canceled Orders</button>
-            <button class="tablinks" onclick="openTab(event, 'Shipped')">Shipped Orders</button>
-        </div>
+        <!-- KPIs -->
+        <section class="kpi" aria-label="Summary statistics">
+            <div class="item">
+                <div class="icon">✅</div>
+                <div class="label">Live Order Count</div>
+                <div class="value mono">{{.EmailStats.LiveOrderCount}}</div>
+            </div>
+            <div class="item">
+                <div class="icon">📦</div>
+                <div class="label">Total Unique Orders</div>
+                <div class="value mono">{{.EmailStats.TotalOrders}}</div>
+            </div>
+            <div class="item">
+                <div class="icon">❌</div>
+                <div class="label">Total Canceled Orders</div>
+                <div class="value mono">{{.EmailStats.TotalCanceled}}</div>
+            </div>
+            <div class="item">
+                <div class="icon">📊</div>
+                <div class="label">Cancellation Rate</div>
+                <div class="value mono">{{printf "%.2f" .EmailStats.CancellationRate}}%</div>
+            </div>
+        </section>
 
-        <div id="OverallStats" class="tabcontent" style="display: block;">
-            <h1>Overall Statistics</h1>
-            <p style="text-align: center; font-style: italic;">{{.DateRange}}</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Total Emails Scanned</th>
-                        <th>Total Unique Orders</th>
-                        <th>Total Canceled Orders</th>
-                        <th>Cancellation Rate</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>{{.EmailStats.TotalEmailsScanned}}</td>
-                        <td>{{.EmailStats.TotalOrders}}</td>
-                        <td>{{.EmailStats.TotalCanceled}}</td>
-                        <td>{{printf "%.2f" .EmailStats.CancellationRate}}%</td>
-                    </tr>
-                </tbody>
-            </table>
-            <h2 style="margin-top: 40px;">Total Units & Spending by Product</h2>
-            <table id="productSummaryTable">
-                <thead>
-                    <tr>
-                        <th>Thumbnail</th>
-                        <th>Product Name</th>
-                        <th onclick="sortTable(2, 'productSummaryTable')">Total Units (Non-Canceled) &#x2195;</th>
-                        <th onclick="sortTable(3, 'productSummaryTable')">Price Per Unit (Estimated) &#x2195;</th>
-                        <th onclick="sortTable(4, 'productSummaryTable')">Total Spent (Estimated) &#x2195;</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .ProductSummaries}}
-                    <tr>
-                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
-                        <td>{{.Name}}</td>
-                        <td>{{.TotalUnits}}</td>
-                        <td>${{printf "%.2f" .PricePerUnit}}</td>
-                        <td>${{printf "%.2f" .TotalSpent}}</td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-            <p style="font-size: 12px; text-align: center; margin-top: 10px;">
-                * Total Spent and Price Per Unit are estimated based on the total cost of orders containing only that
-                specific product. Orders with multiple different products are excluded from these calculations.
-            </p>
-        </div>
+        <!-- Live Orders -->
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Live Orders</div>
+                <div class="subtle">Confirmed orders awaiting shipment</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Live orders table" tabindex="0">
+                    <table id="liveTable">
+                        <thead>
+                            <tr>
+                                <th>Order Date</th>
+                                <th>Order #</th>
+                                <th></th>
+                                <th>Product Name</th>
+                                <th class="num">Quantity</th>
+                                <th class="num">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .LiveOrders}}
+                            <tr>
+                                <td class="mono">{{.OrderDate}}</td>
+                                <td class="mono">{{.OrderID}}</td>
+                                <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
+                                <td>{{.Name}}</td>
+                                <td class="num mono">{{.Quantity}}</td>
+                                <td class="num"><span class="badge success">Confirmed</span></td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
 
-        <div id="CancellationStats" class="tabcontent">
-            <h1>Cancellation Statistics by Product</h1>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Thumbnail</th>
-                        <th>Product Name</th>
-                        <th>Total Ordered</th>
-                        <th>Total Canceled</th>
-                        <th>Cancellation Rate</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Stats}}
-                    <tr>
-                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
-                        <td>{{.Name}}</td>
-                        <td>{{.TotalOrdered}}</td>
-                        <td>{{.TotalCanceled}}</td>
-                        <td>{{printf "%.2f" .CancelRate}}%</td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-        </div>
+        <!-- Product Cancellation -->
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Product Cancellation</div>
+                <div class="subtle">Rates by product</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Product cancel table" tabindex="0">
+                    <table id="cancelTable">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Product Name</th>
+                                <th class="num">Total Ordered</th>
+                                <th class="num">Total Canceled</th>
+                                <th class="num">Cancel Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .ProductCancel}}
+                            <tr>
+                                <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
+                                <td>{{.Name}}</td>
+                                <td class="num mono">{{.TotalOrdered}}</td>
+                                <td class="num mono">{{.TotalCanceled}}</td>
+                                <td class="num mono">{{printf "%.2f" .CancelRate}}%</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
 
-        <div id="Orders" class="tabcontent">
-            <h1>Non-Canceled Walmart Orders</h1>
-            <table id="ordersTable">
-                <thead>
-                    <tr>
-                        <th onclick="sortTable(0, 'ordersTable')">Order Date &#x2195;</th>
-                        <th>Order #</th>
-                        <th>Thumbnail</th>
-                        <th>Product Name</th>
-                        <th>Quantity</th>
-                        <th>Line Total (Est.)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Orders}}
-                    <tr>
-                        <td>{{.OrderDate}}</td>
-                        <td>{{.OrderID}}</td>
-                        <td><img src="{{.ImageURL}}" alt="{{.Name}}"></td>
-                        <td>{{.Name}}</td>
-                        <td>{{.Quantity}}</td>
-                        <td>{{.Total}}</td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-        </div>
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Order Lines</div>
+                <div class="subtle">Individual line items</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Order line items table" tabindex="0">
+                    <table id="ordersTable">
+                        <thead>
+                            <tr>
+                                <th>Order Date</th>
+                                <th>Order #</th>
+                                <th></th>
+                                <th>Product Name</th>
+                                <th class="num">Quantity</th>
+                                <th class="num">Line Total (Est.)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .OrderLines}}
+                            <tr>
+                                <td class="mono">{{.OrderDate}}</td>
+                                <td class="mono">{{.OrderID}}</td>
+                                <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
+                                <td>{{.Name}}</td>
+                                <td class="num mono">{{.Quantity}}</td>
+                                <td class="num mono">{{.Total}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
 
-        <div id="Shipped" class="tabcontent">
-            <h1>Shipped Orders</h1>
-            <button onclick="exportTableToCSV('shippedTable', 'shipped-orders.csv')">Export to CSV</button>
-            <table id="shippedTable">
-                <thead>
-                    <tr>
-                        <th>Order #</th>
-                        <th>Carrier</th>
-                        <th>Tracking #</th>
-                        <th>Estimated Arrival</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .ShippedOrders}}
-                    <tr>
-                        <td>{{.ID}}</td>
-                        <td>{{.Carrier}}</td>
-                        <td>{{.TrackingNumber}}</td>
-                        <td>{{.EstimatedArrival}}</td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-        </div>
+        <!-- Product Spend Estimations -->
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Product Spend (Estimated)</div>
+                <div class="subtle">Orders with a single product only</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Product spend table" tabindex="0">
+                    <table id="spendTable">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Product Name</th>
+                                <th class="num">Total Units</th>
+                                <th class="num">Price / Unit</th>
+                                <th class="num">Total Spent</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .ProductSpend}}
+                            <tr>
+                                <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
+                                <td>{{.Name}}</td>
+                                <td class="num mono">{{.TotalUnits}}</td>
+                                <td class="num mono">${{printf "%.2f" .PricePerUnit}}</td>
+                                <td class="num mono">${{printf "%.2f" .TotalSpent}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Shipments</div>
+                <div class="subtle">Tracking overview</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Shipments table" tabindex="0">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Order #</th>
+                                <th>Carrier</th>
+                                <th>Tracking #</th>
+                                <th>Estimated Arrival</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .Shipments}}
+                            <tr>
+                                <td class="mono">{{.ID}}</td>
+                                <td>{{.Carrier}}</td>
+                                <td class="mono">{{.TrackingNumber}}</td>
+                                <td class="mono">{{.EstimatedArrival}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
     </div>
-    <script>
-        function exportTableToCSV(tableId, filename) {
-            var csv = [];
-            var rows = document.querySelectorAll("#" + tableId + " tr");
-
-            for (var i = 0; i < rows.length; i++) {
-                var row = [], cols = rows[i].querySelectorAll("td, th");
-
-                for (var j = 0; j < cols.length; j++)
-                    row.push(cols[j].innerText);
-
-                csv.push(row.join(","));
-            }
-
-            // Download CSV file
-            var csvFile = new Blob([csv.join("\n")], { type: "text/csv" });
-            var downloadLink = document.createElement("a");
-            downloadLink.download = filename;
-            downloadLink.href = window.URL.createObjectURL(csvFile);
-            downloadLink.style.display = "none";
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-        }
-
-        function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tabcontent");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-            }
-            tablinks = document.getElementsByClassName("tablinks");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            evt.currentTarget.className += " active";
-        }
-
-        function sortTable(n, tableId) {
-            var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
-            table = document.getElementById(tableId);
-            switching = true;
-            dir = "asc";
-            while (switching) {
-                switching = false;
-                rows = table.rows;
-                for (i = 1; i < (rows.length - 1); i++) {
-                    shouldSwitch = false;
-                    x = rows[i].getElementsByTagName("TD")[n];
-                    y = rows[i + 1].getElementsByTagName("TD")[n];
-
-                    var xContent = x.innerHTML;
-                    var yContent = y.innerHTML;
-
-                    var xVal, yVal;
-
-                    if (tableId === 'ordersTable' && n === 0) {
-                        xVal = new Date(xContent);
-                        yVal = new Date(yContent);
-                    } else {
-                        xVal = parseFloat(xContent.replace(/[^0-9.-]+/g, ""));
-                        yVal = parseFloat(yContent.replace(/[^0-9.-]+/g, ""));
-                    }
-
-                    if (dir == "asc") {
-                        if (xVal > yVal) {
-                            shouldSwitch = true;
-                            break;
-                        }
-                    } else if (dir == "desc") {
-                        if (xVal < yVal) {
-                            shouldSwitch = true;
-                            break;
-                        }
-                    }
-                }
-                if (shouldSwitch) {
-                    rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-                    switching = true;
-                    switchcount++;
-                } else {
-                    if (switchcount == 0 && dir == "asc") {
-                        dir = "desc";
-                        switching = true;
-                    }
-                }
-            }
-        }
-
-        const themeToggle = document.getElementById('theme-toggle');
-
-        function setTheme(theme) {
-            if (theme === 'dark-mode') {
-                document.body.classList.add('dark-mode');
-                themeToggle.innerHTML = '☀️';
-            } else {
-                document.body.classList.remove('dark-mode');
-                themeToggle.innerHTML = '💡';
-            }
-            localStorage.setItem('theme', theme);
-        }
-
-        let currentTheme = localStorage.getItem('theme');
-        if (!currentTheme) {
-            currentTheme = 'dark-mode';
-        }
-        setTheme(currentTheme);
-
-        themeToggle.addEventListener('click', () => {
-            let theme = document.body.classList.contains('dark-mode') ? 'light-mode' : 'dark-mode';
-            setTheme(theme);
-        });
-    </script>
 </body>
 
 </html>

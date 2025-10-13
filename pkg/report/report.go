@@ -43,32 +43,36 @@ type Item struct {
 
 type ProductStats struct {
 	Name          string
-	ImageURL      string
+	Thumbnail     string
 	TotalOrdered  int
 	TotalCanceled int
 	CancelRate    float64
 }
 
 type EmailStats struct {
-	TotalEmailsScanned int
-	TotalOrders        int
-	TotalCanceled      int
-	CancellationRate   float64
+	LiveOrderCount   int
+	TotalOrders      int
+	TotalCanceled    int
+	CancellationRate float64
 }
 
 type TemplateData struct {
-	Stats            []ProductStats
-	EmailStats       EmailStats
-	Orders           []OrderDetail
-	ShippedOrders    []*ShippedOrder
-	ProductSummaries []ProductSummary
-	DateRange        string
+	Stats         []ProductStats
+	EmailStats    EmailStats
+	Orders        []OrderDetail
+	ShippedOrders []*ShippedOrder
+	DateRange     string
+	ProductSpend  []ProductSummary
+	ProductCancel []ProductStats
+	OrderLines    []OrderDetail
+	Shipments     []*ShippedOrder
+	LiveOrders    []OrderDetail
 }
 
 type OrderDetail struct {
 	OrderID   string
 	OrderDate string
-	ImageURL  string
+	Thumbnail string
 	Name      string
 	Quantity  int
 	Total     string
@@ -76,7 +80,7 @@ type OrderDetail struct {
 
 type ProductSummary struct {
 	Name         string
-	ImageURL     string
+	Thumbnail    string
 	TotalUnits   int
 	TotalSpent   float64
 	PricePerUnit float64
@@ -144,7 +148,7 @@ func CalculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]flo
 	for _, order := range nonCanceledOrders {
 		for _, item := range order.Items {
 			if _, ok := m[item.Name]; !ok {
-				m[item.Name] = &ProductSummary{Name: item.Name, ImageURL: item.ImageURL}
+				m[item.Name] = &ProductSummary{Name: item.Name, Thumbnail: item.ImageURL}
 			}
 			s := m[item.Name]
 			s.TotalUnits += item.Quantity
@@ -157,7 +161,7 @@ func CalculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]flo
 	return m
 }
 
-func CalculateEmailStats(orders map[string]*Order, totalEmailsScanned int) EmailStats {
+func CalculateEmailStats(orders map[string]*Order, liveOrderCount int) EmailStats {
 	totalOrders := len(orders)
 	totalCanceled := 0
 	for _, order := range orders {
@@ -170,10 +174,10 @@ func CalculateEmailStats(orders map[string]*Order, totalEmailsScanned int) Email
 		cancelRate = float64(totalCanceled) / float64(totalOrders) * 100
 	}
 	return EmailStats{
-		TotalEmailsScanned: totalEmailsScanned,
-		TotalOrders:        totalOrders,
-		TotalCanceled:      totalCanceled,
-		CancellationRate:   cancelRate,
+		LiveOrderCount:   liveOrderCount,
+		TotalOrders:      totalOrders,
+		TotalCanceled:    totalCanceled,
+		CancellationRate: cancelRate,
 	}
 }
 
@@ -182,7 +186,7 @@ func CalculateProductStats(orders map[string]*Order) []ProductStats {
 	for _, order := range orders {
 		for _, item := range order.Items {
 			if _, ok := statsMap[item.Name]; !ok {
-				statsMap[item.Name] = &ProductStats{Name: item.Name, ImageURL: item.ImageURL}
+				statsMap[item.Name] = &ProductStats{Name: item.Name, Thumbnail: item.ImageURL}
 			}
 			statsMap[item.Name].TotalOrdered += item.Quantity
 			if order.Status == "canceled" {
@@ -212,7 +216,7 @@ func PrepareOrderDetails(nonCanceledOrders []*Order, learnedPrices map[string]fl
 			out = append(out, OrderDetail{
 				OrderID:   FormatOrderID(order.ID),
 				OrderDate: order.OrderDate,
-				ImageURL:  item.ImageURL,
+				Thumbnail: item.ImageURL,
 				Name:      item.Name,
 				Quantity:  item.Quantity,
 				Total:     totalStr,
@@ -233,20 +237,26 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	)
 
 	normalizeProductNames(orders)
-	emailStats := CalculateEmailStats(orders, totalEmailsScanned)
 	stats := CalculateProductStats(orders)
 	nonCanceled := filterNonCanceled(orders)
 	learned := LearnPrices(nonCanceled)
 	productSummaries := buildProductSummaries(nonCanceled, learned)
 	orderDetails := PrepareOrderDetails(nonCanceled, learned)
+	liveOrdersFiltered := filterLiveOrders(nonCanceled, shippedOrders)
+	liveOrdersForTemplate := PrepareOrderDetails(liveOrdersFiltered, learned)
+	emailStats := CalculateEmailStats(orders, len(liveOrdersFiltered))
 
 	data := TemplateData{
-		Stats:            stats,
-		EmailStats:       emailStats,
-		Orders:           orderDetails,
-		ShippedOrders:    shippedOrders,
-		ProductSummaries: productSummaries,
-		DateRange:        dateRangeStr,
+		Stats:         stats,
+		EmailStats:    emailStats,
+		Orders:        orderDetails,
+		ShippedOrders: shippedOrders,
+		DateRange:     dateRangeStr,
+		ProductSpend:  productSummaries,
+		ProductCancel: stats,
+		OrderLines:    orderDetails,
+		Shipments:     shippedOrders,
+		LiveOrders:    liveOrdersForTemplate,
 	}
 
 	t := template.Must(template.New("webpage").Parse(templateHTML))
@@ -300,6 +310,24 @@ func buildProductSummaries(orders []*Order, learnedPrices map[string]float64) []
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TotalSpent > out[j].TotalSpent })
 	return out
+}
+
+func filterLiveOrders(nonCanceledOrders []*Order, shippedOrders []*ShippedOrder) []*Order {
+	shippedIDs := make(map[string]struct{})
+	for _, s := range shippedOrders {
+		shippedIDs[s.ID] = struct{}{}
+	}
+
+	var liveOrders []*Order
+	for _, o := range nonCanceledOrders {
+		if _, isShipped := shippedIDs[o.ID]; !isShipped {
+			liveOrders = append(liveOrders, o)
+		}
+	}
+	sort.Slice(liveOrders, func(i, j int) bool {
+		return liveOrders[i].OrderDateParsed.After(liveOrders[j].OrderDateParsed)
+	})
+	return liveOrders
 }
 
 func GenerateCSV(orders map[string]*Order, path string) error {

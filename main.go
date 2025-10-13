@@ -75,7 +75,6 @@ func main() {
 	if err := openReport(htmlPath); err != nil {
 		log.Printf("open report: %v", err)
 	}
-
 }
 
 func maybePromptDays(days *int) bool {
