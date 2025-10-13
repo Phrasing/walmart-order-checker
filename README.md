@@ -1,7 +1,7 @@
 <h1 align="center">Walmart Order Checker</h1>
 
 <p align="center">
-  <img width="460" src="./.github/assets/vA7eZV5g.png">
+  <img width="560" src="./.github/assets/vA7eZV5g.png">
 </p>
 
 This tool scans your Gmail for Walmart order confirmation and cancellation emails to provide you with a summary of your order history.
