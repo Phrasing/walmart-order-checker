@@ -108,7 +108,7 @@ func maybePromptDays(days *int) bool {
 
 func buildQuery(days int) string {
 	return fmt.Sprintf(
-		"from:%s subject:(\"thanks for your preorder\" OR \"thanks for your order\" OR \"Canceled: delivery from order\" OR \"Shipped:\") newer_than:%dd",
+		"from:%s subject:(\"thanks for your preorder\" OR \"thanks for your order\" OR \"Canceled: delivery from order\" OR \"was canceled\" OR \"Shipped:\" OR \"Arrived:\" OR \"Delivered:\") newer_than:%dd",
 		walmartSender, days,
 	)
 }

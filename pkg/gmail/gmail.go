@@ -236,6 +236,53 @@ func processCanceledEmail(subject string, orders map[string]*report.Order) {
 	}
 }
 
+func processPaymentFailCancelEmail(msg *gm.Message, orders map[string]*report.Order) {
+	doc, err := parseMessageHTML(msg)
+	if err != nil {
+		return
+	}
+	// Extract order ID from the HTML body (format: 2000131-89912005)
+	orderIDRaw := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
+	if orderIDRaw == "" {
+		return
+	}
+	// Remove hyphens to normalize format
+	orderID := strings.ReplaceAll(orderIDRaw, "-", "")
+	if existing, ok := orders[orderID]; ok {
+		existing.Status = "canceled"
+	} else {
+		orders[orderID] = &report.Order{ID: orderID, Status: "canceled"}
+	}
+}
+
+func processDeliveredEmail(msg *gm.Message) string {
+	doc, err := parseMessageHTML(msg)
+	if err != nil {
+		return ""
+	}
+	// Delivered emails have order number in format: #2000129-05242992
+	// Find the order number link with # prefix (delivered emails don't use aria-label)
+	orderIDRaw := ""
+	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if strings.HasPrefix(text, "#") && strings.Contains(text, "-") {
+			// Make sure it looks like an order number (starts with #2)
+			if len(text) > 10 && text[1] == '2' {
+				orderIDRaw = text
+			}
+		}
+	})
+
+	if orderIDRaw == "" {
+		return ""
+	}
+
+	// Remove # prefix and hyphens to normalize format
+	orderID := strings.TrimPrefix(orderIDRaw, "#")
+	orderID = strings.ReplaceAll(orderID, "-", "")
+	return orderID
+}
+
 func processShippedEmail(msg *gm.Message) []*report.ShippedOrder {
 	doc, err := parseMessageHTML(msg)
 	if err != nil {
@@ -448,11 +495,15 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 
 				// Parse outside the lock; only mutate maps inside lock.
 				switch {
-				case strings.Contains(subject, "Canceled"):
+				case strings.Contains(subject, "Canceled:"):
 					mu.Lock()
 					processCanceledEmail(subject, orders)
 					mu.Unlock()
-				case strings.Contains(subject, "Shipped"):
+				case strings.HasSuffix(subject, "was canceled 🔴"):
+					mu.Lock()
+					processPaymentFailCancelEmail(msg, orders)
+					mu.Unlock()
+				case strings.Contains(subject, "Shipped:"):
 					newShipped := processShippedEmail(msg)
 					if len(newShipped) > 0 {
 						mu.Lock()
@@ -461,6 +512,22 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 								shipped = append(shipped, s)
 								shippedIDs[s.TrackingNumber] = struct{}{}
 							}
+						}
+						mu.Unlock()
+					}
+				case strings.HasPrefix(subject, "Arrived:"), strings.HasPrefix(subject, "Delivered:"):
+					deliveredOrderID := processDeliveredEmail(msg)
+					if deliveredOrderID != "" {
+						mu.Lock()
+						// Add to shipped list so it gets filtered out of live orders
+						if _, ok := shippedIDs[deliveredOrderID]; !ok {
+							shipped = append(shipped, &report.ShippedOrder{
+								ID:               deliveredOrderID,
+								TrackingNumber:   "DELIVERED",
+								Carrier:          "Delivered",
+								EstimatedArrival: "",
+							})
+							shippedIDs[deliveredOrderID] = struct{}{}
 						}
 						mu.Unlock()
 					}
