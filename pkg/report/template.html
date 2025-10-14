@@ -14,7 +14,7 @@
         function filterAllTables() {
             const input = document.getElementById('globalSearch');
             const filter = input.value.toLowerCase();
-            const tableIds = ['spendTable', 'cancelTable', 'ordersTable', 'liveTable'];
+            const tableIds = ['spendTable', 'cancelTable', 'ordersTable', 'liveTable', 'liveOrderSummaryTable'];
 
             tableIds.forEach(tableId => {
                 const table = document.getElementById(tableId);
@@ -431,7 +431,7 @@
             </div>
             <div class="card-body">
                 <div class="table-wrap" role="region" aria-label="Live order summary table" tabindex="0">
-                    <table>
+                    <table id="liveOrderSummaryTable">
                         <thead>
                             <tr>
                                 <th></th>
@@ -447,8 +447,10 @@
                                 <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
                                 <td>{{.Name}}</td>
                                 <td class="num mono">{{.TotalUnits}}</td>
-                                <td class="num mono">{{if gt .PricePerUnit 0.0}}${{printf "%.2f" .PricePerUnit}}{{else}}—{{end}}</td>
-                                <td class="num mono">{{if gt .TotalSpent 0.0}}${{printf "%.2f" .TotalSpent}}{{else}}—{{end}}</td>
+                                <td class="num mono">{{if gt .PricePerUnit 0.0}}${{printf "%.2f"
+                                    .PricePerUnit}}{{else}}—{{end}}</td>
+                                <td class="num mono">{{if gt .TotalSpent 0.0}}${{printf "%.2f"
+                                    .TotalSpent}}{{else}}—{{end}}</td>
                             </tr>
                             {{end}}
                         </tbody>

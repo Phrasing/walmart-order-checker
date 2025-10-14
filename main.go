@@ -25,8 +25,8 @@ const (
 )
 
 type AccountConfig struct {
-	Name            string // Display name (email or "[Root credentials]")
-	Email           string // Empty for root until after auth
+	Name            string
+	Email           string
 	CredentialsPath string
 	TokenPath       string
 	IsRoot          bool
@@ -34,34 +34,39 @@ type AccountConfig struct {
 
 func main() {
 	daysFlag := flag.Int("days", defaultDays, "Number of days back to scan for emails")
+	clearCacheFlag := flag.Bool("clear-cache", false, "Clear message cache before scanning")
 	flag.Parse()
 
-	// Discover all accounts
+	if *clearCacheFlag {
+		cache := gmail.NewMessageCache(".cache/messages", 24*time.Hour)
+		if err := cache.Clear(); err != nil {
+			log.Printf("Warning: failed to clear cache: %v", err)
+		} else {
+			fmt.Println("✓ Cache cleared successfully")
+		}
+	}
+
 	accounts := discoverAccounts()
 
 	if len(accounts) == 0 {
 		log.Fatal("No Gmail accounts found. Please set up credentials.json in the root directory or in account folders.")
 	}
 
-	// Print discovered accounts
 	fmt.Printf("Found %d Gmail account(s):\n", len(accounts))
 	for i, acc := range accounts {
 		fmt.Printf("  %d. %s\n", i+1, acc.Name)
 	}
 	fmt.Println()
 
-	// Prompt for multi-account mode if 2+ accounts
 	multiMode := false
 	if len(accounts) >= 2 {
 		multiMode = promptMultiAccountMode()
 	}
 
-	// Prompt for days
 	maybePromptDays(daysFlag)
 	days := *daysFlag
 
 	if multiMode {
-		// Check if all accounts have valid tokens
 		allHaveTokens := true
 		for _, acc := range accounts {
 			if !hasValidToken(acc.TokenPath) {
@@ -90,8 +95,6 @@ func maybePromptDays(days *int) bool {
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		// If there's an error reading input (e.g., running without a console),
-		// just use the default and continue.
 		fmt.Printf("\nCould not read input, using default of %d days.\n", defaultDays)
 		*days = defaultDays
 		return true
@@ -135,7 +138,6 @@ func openReport(path string) error {
 func discoverAccounts() []AccountConfig {
 	var accounts []AccountConfig
 
-	// Check root credentials
 	if fileExists("credentials.json") {
 		accounts = append(accounts, AccountConfig{
 			Name:            "[Root credentials]",
@@ -146,7 +148,6 @@ func discoverAccounts() []AccountConfig {
 		})
 	}
 
-	// Scan for account folders
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		return accounts
@@ -184,19 +185,17 @@ func hasValidToken(tokenPath string) bool {
 	if !fileExists(tokenPath) {
 		return false
 	}
-	// Try to read and parse the token file
 	f, err := os.Open(tokenPath)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
 
-	var token map[string]interface{}
+	var token map[string]any
 	if err := json.NewDecoder(f).Decode(&token); err != nil {
 		return false
 	}
 
-	// Check if token has required fields
 	_, hasAccess := token["access_token"]
 	_, hasRefresh := token["refresh_token"]
 	return hasAccess || hasRefresh
@@ -216,7 +215,6 @@ func promptMultiAccountMode() bool {
 func mergeOrders(dest, src map[string]*report.Order) {
 	for id, order := range src {
 		if existing, ok := dest[id]; ok {
-			// Merge logic: prefer more complete data
 			if len(existing.Items) == 0 {
 				existing.Items = order.Items
 			}
@@ -227,7 +225,6 @@ func mergeOrders(dest, src map[string]*report.Order) {
 				existing.OrderDate = order.OrderDate
 				existing.OrderDateParsed = order.OrderDateParsed
 			}
-			// Keep canceled status if either is canceled
 			if existing.Status != "canceled" {
 				existing.Status = order.Status
 			}
@@ -258,7 +255,6 @@ func processAccountsInParallel(accounts []AccountConfig, days int) {
 				return
 			}
 
-			// Get email if root account
 			accountEmail := acc.Email
 			if acc.IsRoot {
 				profile, err := srv.Users.GetProfile("me").Do()
@@ -286,7 +282,6 @@ func processAccountsInParallel(accounts []AccountConfig, days int) {
 			elapsed := time.Since(startTime)
 			fmt.Printf("  ✓ Completed %s in %s\n", accountEmail, elapsed.Round(time.Millisecond))
 
-			// Thread-safe merge
 			mu.Lock()
 			mergeOrders(allOrders, orders)
 			allShipped = append(allShipped, shipped...)
@@ -297,7 +292,6 @@ func processAccountsInParallel(accounts []AccountConfig, days int) {
 
 	wg.Wait()
 
-	// Generate combined report
 	outDir := "out/combined"
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
@@ -308,14 +302,33 @@ func processAccountsInParallel(accounts []AccountConfig, days int) {
 	csvPath := filepath.Join(outDir, fmt.Sprintf("orders_%s.csv", dateRange))
 	shippedCSVPath := filepath.Join(outDir, fmt.Sprintf("shipped_orders_%s.csv", dateRange))
 
-	if err := report.GenerateHTML(allOrders, totalEmails, days, htmlPath, allShipped); err != nil {
-		log.Fatalf("write html: %v", err)
+	var reportWg sync.WaitGroup
+	var htmlErr, csvErr, shippedErr error
+
+	reportWg.Add(3)
+	go func() {
+		defer reportWg.Done()
+		htmlErr = report.GenerateHTML(allOrders, totalEmails, days, htmlPath, allShipped)
+	}()
+	go func() {
+		defer reportWg.Done()
+		csvErr = report.GenerateCSV(allOrders, csvPath)
+	}()
+	go func() {
+		defer reportWg.Done()
+		shippedErr = report.GenerateShippedCSV(allShipped, shippedCSVPath)
+	}()
+
+	reportWg.Wait()
+
+	if htmlErr != nil {
+		log.Fatalf("write html: %v", htmlErr)
 	}
-	if err := report.GenerateCSV(allOrders, csvPath); err != nil {
-		log.Fatalf("write csv: %v", err)
+	if csvErr != nil {
+		log.Fatalf("write csv: %v", csvErr)
 	}
-	if err := report.GenerateShippedCSV(allShipped, shippedCSVPath); err != nil {
-		log.Fatalf("write shipped csv: %v", err)
+	if shippedErr != nil {
+		log.Fatalf("write shipped csv: %v", shippedErr)
 	}
 
 	fmt.Printf("\nCombined report has been generated: %s\n", htmlPath)
@@ -339,7 +352,6 @@ func processAccountsSequentially(accounts []AccountConfig, days int) {
 			continue
 		}
 
-		// Get email if root account
 		accountEmail := account.Email
 		if account.IsRoot {
 			profile, err := srv.Users.GetProfile("me").Do()
@@ -372,7 +384,6 @@ func processAccountsSequentially(accounts []AccountConfig, days int) {
 		totalEmails += len(messages)
 	}
 
-	// Generate combined report
 	outDir := "out/combined"
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
@@ -383,14 +394,33 @@ func processAccountsSequentially(accounts []AccountConfig, days int) {
 	csvPath := filepath.Join(outDir, fmt.Sprintf("orders_%s.csv", dateRange))
 	shippedCSVPath := filepath.Join(outDir, fmt.Sprintf("shipped_orders_%s.csv", dateRange))
 
-	if err := report.GenerateHTML(allOrders, totalEmails, days, htmlPath, allShipped); err != nil {
-		log.Fatalf("write html: %v", err)
+	var reportWg sync.WaitGroup
+	var htmlErr, csvErr, shippedErr error
+
+	reportWg.Add(3)
+	go func() {
+		defer reportWg.Done()
+		htmlErr = report.GenerateHTML(allOrders, totalEmails, days, htmlPath, allShipped)
+	}()
+	go func() {
+		defer reportWg.Done()
+		csvErr = report.GenerateCSV(allOrders, csvPath)
+	}()
+	go func() {
+		defer reportWg.Done()
+		shippedErr = report.GenerateShippedCSV(allShipped, shippedCSVPath)
+	}()
+
+	reportWg.Wait()
+
+	if htmlErr != nil {
+		log.Fatalf("write html: %v", htmlErr)
 	}
-	if err := report.GenerateCSV(allOrders, csvPath); err != nil {
-		log.Fatalf("write csv: %v", err)
+	if csvErr != nil {
+		log.Fatalf("write csv: %v", csvErr)
 	}
-	if err := report.GenerateShippedCSV(allShipped, shippedCSVPath); err != nil {
-		log.Fatalf("write shipped csv: %v", err)
+	if shippedErr != nil {
+		log.Fatalf("write shipped csv: %v", shippedErr)
 	}
 
 	fmt.Printf("\nCombined report has been generated: %s\n", htmlPath)
@@ -439,14 +469,33 @@ func processSingleAccount(account AccountConfig, days int) {
 	csvPath := filepath.Join(outDir, fmt.Sprintf("orders_%s.csv", dateRange))
 	shippedCSVPath := filepath.Join(outDir, fmt.Sprintf("shipped_orders_%s.csv", dateRange))
 
-	if err := report.GenerateHTML(orders, len(allMessages), days, htmlPath, shipped); err != nil {
-		log.Fatalf("write html: %v", err)
+	var reportWg sync.WaitGroup
+	var htmlErr, csvErr, shippedErr error
+
+	reportWg.Add(3)
+	go func() {
+		defer reportWg.Done()
+		htmlErr = report.GenerateHTML(orders, len(allMessages), days, htmlPath, shipped)
+	}()
+	go func() {
+		defer reportWg.Done()
+		csvErr = report.GenerateCSV(orders, csvPath)
+	}()
+	go func() {
+		defer reportWg.Done()
+		shippedErr = report.GenerateShippedCSV(shipped, shippedCSVPath)
+	}()
+
+	reportWg.Wait()
+
+	if htmlErr != nil {
+		log.Fatalf("write html: %v", htmlErr)
 	}
-	if err := report.GenerateCSV(orders, csvPath); err != nil {
-		log.Fatalf("write csv: %v", err)
+	if csvErr != nil {
+		log.Fatalf("write csv: %v", csvErr)
 	}
-	if err := report.GenerateShippedCSV(shipped, shippedCSVPath); err != nil {
-		log.Fatalf("write shipped csv: %v", err)
+	if shippedErr != nil {
+		log.Fatalf("write shipped csv: %v", shippedErr)
 	}
 
 	fmt.Printf("Report has been generated: %s\n", htmlPath)

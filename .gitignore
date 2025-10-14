@@ -34,6 +34,12 @@ _testmain.go
 *.out
 /out/
 
+# Cache directory and SQLite database files
+.cache/
+*.db
+*.db-wal
+*.db-shm
+
 # Editor/IDE specific files
 # Visual Studio Code
 .vscode/

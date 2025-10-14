@@ -11,13 +11,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
-	"walmart-order-checker/pkg/util"
-
-	"regexp"
-	"walmart-order-checker/pkg/report"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/schollz/progressbar/v3"
@@ -25,11 +22,15 @@ import (
 	"golang.org/x/oauth2/google"
 	gm "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
+
+	"walmart-order-checker/pkg/report"
+	"walmart-order-checker/pkg/util"
 )
 
 var (
 	carrierRe   = regexp.MustCompile(`(\w+)\s+tracking\s+number`)
 	orderDateRe = regexp.MustCompile(`Order date:\s*(.*)`)
+	orderIDRe   = regexp.MustCompile(`\b(\d{7})-?(\d{8})\b`)
 )
 
 func findHTMLPart(part *gm.MessagePart) string {
@@ -54,15 +55,12 @@ func decodeBase64(data string) (string, error) {
 	trim = strings.ReplaceAll(trim, "\n", "")
 	trim = strings.ReplaceAll(trim, "\r", "")
 
-	// Gmail payloads are typically URL-safe without padding.
 	if dec, err := base64.RawURLEncoding.DecodeString(trim); err == nil {
 		return string(dec), nil
 	}
-	// Try standard enc without padding.
 	if dec, err := base64.RawStdEncoding.DecodeString(trim); err == nil {
 		return string(dec), nil
 	}
-	// Add padding to multiple of 4 and try both.
 	if m := len(trim) % 4; m != 0 {
 		trim += strings.Repeat("=", 4-m)
 	}
@@ -131,7 +129,6 @@ func startOAuthWebServer(authURL string) (string, error) {
 }
 
 func getTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
-	// Note: uses local redirect server on random port; user is redirected to OAuth URL then back.
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	fmt.Println("Attempting to open the authorization link in your browser.")
 	fmt.Printf("If it doesn't open automatically, please go to this link:\n%v\n", authURL)
@@ -235,22 +232,35 @@ func processCanceledEmail(subject string, orders map[string]*report.Order) {
 	}
 }
 
-func processPaymentFailCancelEmail(msg *gm.Message, orders map[string]*report.Order) {
-	doc, err := parseMessageHTML(msg)
-	if err != nil {
-		return
+func extractOrderIDFromSubject(subject string) string {
+	matches := orderIDRe.FindStringSubmatch(subject)
+	if len(matches) >= 3 {
+		return matches[1] + matches[2]
 	}
-	// Extract order ID from the HTML body (format: 2000131-89912005)
-	orderIDRaw := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
-	if orderIDRaw == "" {
-		return
+	return ""
+}
+
+func processPaymentFailCancelEmail(msg *gm.Message, subject string, orders map[string]*report.Order) {
+	orderID := extractOrderIDFromSubject(subject)
+
+	if orderID == "" {
+		doc, err := parseMessageHTML(msg)
+		if err != nil {
+			return
+		}
+		orderIDRaw := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
+		if orderIDRaw == "" {
+			return
+		}
+		orderID = strings.ReplaceAll(orderIDRaw, "-", "")
 	}
-	// Remove hyphens to normalize format
-	orderID := strings.ReplaceAll(orderIDRaw, "-", "")
-	if existing, ok := orders[orderID]; ok {
-		existing.Status = "canceled"
-	} else {
-		orders[orderID] = &report.Order{ID: orderID, Status: "canceled"}
+
+	if orderID != "" {
+		if existing, ok := orders[orderID]; ok {
+			existing.Status = "canceled"
+		} else {
+			orders[orderID] = &report.Order{ID: orderID, Status: "canceled"}
+		}
 	}
 }
 
@@ -259,13 +269,11 @@ func processDeliveredEmail(msg *gm.Message) string {
 	if err != nil {
 		return ""
 	}
-	// Delivered emails have order number in format: #2000129-05242992
-	// Find the order number link with # prefix (delivered emails don't use aria-label)
+
 	orderIDRaw := ""
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
 		if strings.HasPrefix(text, "#") && strings.Contains(text, "-") {
-			// Make sure it looks like an order number (starts with #2)
 			if len(text) > 10 && text[1] == '2' {
 				orderIDRaw = text
 			}
@@ -276,7 +284,6 @@ func processDeliveredEmail(msg *gm.Message) string {
 		return ""
 	}
 
-	// Remove # prefix and hyphens to normalize format
 	orderID := strings.TrimPrefix(orderIDRaw, "#")
 	orderID = strings.ReplaceAll(orderID, "-", "")
 	return orderID
@@ -318,8 +325,6 @@ func extractShippingInfo(doc *goquery.Document) []*report.ShippedOrder {
 
 	carrier := extractCarrier(doc)
 
-	// Pair up tracking numbers and arrival dates.
-	// This assumes a 1:1 correspondence and order, which is typical for these emails.
 	count := min(len(arrivalDates), len(trackingNumbers))
 
 	for i := range count {
@@ -453,20 +458,29 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 		progressbar.OptionSetWidth(50),
 		progressbar.OptionShowCount(),
 		progressbar.OptionEnableColorCodes(true),
-		progressbar.OptionClearOnFinish(), // clears the bar line
+		progressbar.OptionClearOnFinish(),
 	)
 
-	const workers = 8
+	const workers = 24
 	jobs := make(chan string, workers*2)
 	var wg sync.WaitGroup
 
-	getMessage := func(id string) (*gm.Message, error) {
+	cache := NewMessageCache(".cache/messages", 24*time.Hour)
+
+	processMessage := func(id string) (*CachedResult, error) {
+		if cached, ok := cache.Get(id); ok {
+			return cached, nil
+		}
+
 		const maxAttempts = 5
 		backoff := time.Second
+		var msg *gm.Message
+		var err error
+
 		for attempt := 0; attempt < maxAttempts; attempt++ {
-			msg, err := srv.Users.Messages.Get(user, id).Format("full").Do()
+			msg, err = srv.Users.Messages.Get(user, id).Format("full").Do()
 			if err == nil {
-				return msg, nil
+				break
 			}
 			if strings.Contains(err.Error(), "rateLimitExceeded") || strings.Contains(err.Error(), "backendError") {
 				time.Sleep(backoff)
@@ -475,7 +489,56 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 			}
 			return nil, err
 		}
-		return nil, fmt.Errorf("max retries exceeded")
+		if msg == nil {
+			return nil, fmt.Errorf("max retries exceeded")
+		}
+
+		subject := getSubject(msg.Payload.Headers)
+		result := &CachedResult{}
+
+		switch {
+		case strings.Contains(subject, "Canceled:"):
+			parts := strings.Split(subject, "#")
+			if len(parts) > 1 {
+				result.Order = &report.Order{ID: parts[1], Status: "canceled"}
+			}
+		case strings.HasSuffix(subject, "was canceled 🔴"):
+			orderID := extractOrderIDFromSubject(subject)
+			if orderID == "" {
+				doc, err := parseMessageHTML(msg)
+				if err == nil {
+					orderIDRaw := strings.TrimSpace(doc.Find("a[aria-label*=' ']").First().Text())
+					if orderIDRaw != "" {
+						orderID = strings.ReplaceAll(orderIDRaw, "-", "")
+					}
+				}
+			}
+			if orderID != "" {
+				result.Order = &report.Order{ID: orderID, Status: "canceled"}
+			}
+		case strings.Contains(subject, "Shipped:"):
+			result.Shipped = processShippedEmail(msg)
+		case strings.HasPrefix(subject, "Arrived:"), strings.HasPrefix(subject, "Delivered:"):
+			deliveredOrderID := processDeliveredEmail(msg)
+			if deliveredOrderID != "" {
+				result.Shipped = []*report.ShippedOrder{
+					{
+						ID:               deliveredOrderID,
+						TrackingNumber:   "DELIVERED",
+						Carrier:          "Delivered",
+						EstimatedArrival: "",
+					},
+				}
+			}
+		default:
+			doc, err := parseMessageHTML(msg)
+			if err == nil {
+				result.Order = extractOrderInfo(doc, subject)
+			}
+		}
+
+		cache.Set(id, result)
+		return result, nil
 	}
 
 	for range workers {
@@ -483,68 +546,25 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 		go func() {
 			defer wg.Done()
 			for id := range jobs {
-				msg, err := getMessage(id)
+				result, err := processMessage(id)
 				if err != nil {
-					// Log and continue; skip this message.
-					log.Printf("get message %s: %v", id, err)
+					log.Printf("process message %s: %v", id, err)
 					bar.Add(1)
 					continue
 				}
-				subject := getSubject(msg.Payload.Headers)
 
-				// Parse outside the lock; only mutate maps inside lock.
-				switch {
-				case strings.Contains(subject, "Canceled:"):
-					mu.Lock()
-					processCanceledEmail(subject, orders)
-					mu.Unlock()
-				case strings.HasSuffix(subject, "was canceled 🔴"):
-					mu.Lock()
-					processPaymentFailCancelEmail(msg, orders)
-					mu.Unlock()
-				case strings.Contains(subject, "Shipped:"):
-					newShipped := processShippedEmail(msg)
-					if len(newShipped) > 0 {
-						mu.Lock()
-						for _, s := range newShipped {
-							if _, ok := shippedIDs[s.TrackingNumber]; !ok {
-								shipped = append(shipped, s)
-								shippedIDs[s.TrackingNumber] = struct{}{}
-							}
-						}
-						mu.Unlock()
-					}
-				case strings.HasPrefix(subject, "Arrived:"), strings.HasPrefix(subject, "Delivered:"):
-					deliveredOrderID := processDeliveredEmail(msg)
-					if deliveredOrderID != "" {
-						mu.Lock()
-						// Add to shipped list so it gets filtered out of live orders
-						if _, ok := shippedIDs[deliveredOrderID]; !ok {
-							shipped = append(shipped, &report.ShippedOrder{
-								ID:               deliveredOrderID,
-								TrackingNumber:   "DELIVERED",
-								Carrier:          "Delivered",
-								EstimatedArrival: "",
-							})
-							shippedIDs[deliveredOrderID] = struct{}{}
-						}
-						mu.Unlock()
-					}
-				default:
-					docMsg := msg
-					order := func() *report.Order {
-						doc, err := parseMessageHTML(docMsg)
-						if err != nil {
-							return nil
-						}
-						return extractOrderInfo(doc, subject)
-					}()
-					if order != nil && order.ID != "" {
-						mu.Lock()
-						mergeOrCreateOrder(orders, order)
-						mu.Unlock()
+				mu.Lock()
+				if result.Order != nil && result.Order.ID != "" {
+					mergeOrCreateOrder(orders, result.Order)
+				}
+				for _, s := range result.Shipped {
+					key := s.ID + ":" + s.TrackingNumber
+					if _, ok := shippedIDs[key]; !ok {
+						shipped = append(shipped, s)
+						shippedIDs[key] = struct{}{}
 					}
 				}
+				mu.Unlock()
 
 				bar.Add(1)
 			}

@@ -168,8 +168,9 @@ func CalculateLiveOrderSummary(liveOrders []*Order, learnedPrices map[string]flo
 	for _, s := range m {
 		out = append(out, *s)
 	}
-	// Sort by total units descending
-	sort.Slice(out, func(i, j int) bool { return out[i].TotalUnits > out[j].TotalUnits })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].TotalUnits > out[j].TotalUnits
+	})
 	return out
 }
 
@@ -213,7 +214,9 @@ func CalculateProductStats(orders map[string]*Order) []ProductStats {
 		}
 		stats = append(stats, *stat)
 	}
-	sort.Slice(stats, func(i, j int) bool { return stats[i].CancelRate > stats[j].CancelRate })
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].CancelRate > stats[j].CancelRate
+	})
 	return stats
 }
 
@@ -322,7 +325,9 @@ func buildProductSummaries(orders []*Order, learnedPrices map[string]float64) []
 	for _, s := range m {
 		out = append(out, *s)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TotalSpent > out[j].TotalSpent })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].TotalSpent > out[j].TotalSpent
+	})
 	return out
 }
 
