@@ -423,6 +423,40 @@
             </div>
         </section>
 
+        <!-- Live Order Summary -->
+        <section class="card section-spacing">
+            <div class="card-header">
+                <div class="card-title">Live Order Summary</div>
+                <div class="subtle">Total units and estimated spend for live orders</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap" role="region" aria-label="Live order summary table" tabindex="0">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Product Name</th>
+                                <th class="num">Total Units</th>
+                                <th class="num">Price / Unit</th>
+                                <th class="num">Estimated Spend</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .LiveOrderSummary}}
+                            <tr>
+                                <td><img class="thumb" src="{{.Thumbnail}}" alt="" /></td>
+                                <td>{{.Name}}</td>
+                                <td class="num mono">{{.TotalUnits}}</td>
+                                <td class="num mono">{{if gt .PricePerUnit 0.0}}${{printf "%.2f" .PricePerUnit}}{{else}}—{{end}}</td>
+                                <td class="num mono">{{if gt .TotalSpent 0.0}}${{printf "%.2f" .TotalSpent}}{{else}}—{{end}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <!-- Live Orders -->
         <section class="card section-spacing">
             <div class="card-header">

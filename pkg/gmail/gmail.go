@@ -75,15 +75,14 @@ func decodeBase64(data string) (string, error) {
 	return "", errors.New("base64 decode failed")
 }
 
-func getClient(config *oauth2.Config) (*http.Client, error) {
-	const tokFile = "token.json"
-	tok, err := tokenFromFile(tokFile)
+func getClient(config *oauth2.Config, tokenPath string) (*http.Client, error) {
+	tok, err := tokenFromFile(tokenPath)
 	if err != nil {
 		tok, err = getTokenFromWeb(config)
 		if err != nil {
 			return nil, err
 		}
-		if err := saveToken(tokFile, tok); err != nil {
+		if err := saveToken(tokenPath, tok); err != nil {
 			return nil, err
 		}
 	}
@@ -170,20 +169,20 @@ func saveToken(path string, token *oauth2.Token) error {
 	return json.NewEncoder(f).Encode(token)
 }
 
-func InitializeGmailService() (*gm.Service, error) {
-	credentials, err := os.ReadFile("credentials.json")
+func InitializeGmailService(credentialsPath, tokenPath string) (*gm.Service, error) {
+	credentials, err := os.ReadFile(credentialsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Error: credentials.json not found.")
+			fmt.Printf("Error: %s not found.\n", credentialsPath)
 			fmt.Println("\nPlease follow these steps to set up your credentials:")
 			fmt.Println("1. Go to the Google Cloud Console and create a new project.")
 			fmt.Println("2. Enable the Gmail API for your project.")
 			fmt.Println("3. Create an OAuth 2.0 Client ID for a 'Desktop app'.")
 			fmt.Println("4. Download the JSON file, rename it to 'credentials.json',")
-			fmt.Println("   and place it in the same directory as this executable.")
+			fmt.Println("   and place it in the appropriate directory.")
 			fmt.Println("\nPress 'Enter' to exit.")
 			bufio.NewReader(os.Stdin).ReadBytes('\n')
-			return nil, errors.New("credentials.json not found, please set it up")
+			return nil, fmt.Errorf("credentials file not found: %s", credentialsPath)
 		}
 		return nil, fmt.Errorf("read credentials: %w", err)
 	}
@@ -191,7 +190,7 @@ func InitializeGmailService() (*gm.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse credentials: %w", err)
 	}
-	client, err := getClient(config)
+	client, err := getClient(config, tokenPath)
 	if err != nil {
 		return nil, err
 	}

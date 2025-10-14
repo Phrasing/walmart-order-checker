@@ -57,16 +57,17 @@ type EmailStats struct {
 }
 
 type TemplateData struct {
-	Stats         []ProductStats
-	EmailStats    EmailStats
-	Orders        []OrderDetail
-	ShippedOrders []*ShippedOrder
-	DateRange     string
-	ProductSpend  []ProductSummary
-	ProductCancel []ProductStats
-	OrderLines    []OrderDetail
-	Shipments     []*ShippedOrder
-	LiveOrders    []OrderDetail
+	Stats            []ProductStats
+	EmailStats       EmailStats
+	Orders           []OrderDetail
+	ShippedOrders    []*ShippedOrder
+	DateRange        string
+	ProductSpend     []ProductSummary
+	ProductCancel    []ProductStats
+	OrderLines       []OrderDetail
+	Shipments        []*ShippedOrder
+	LiveOrders       []OrderDetail
+	LiveOrderSummary []ProductSummary
 }
 
 type OrderDetail struct {
@@ -161,6 +162,17 @@ func CalculateSummaries(nonCanceledOrders []*Order, learnedPrices map[string]flo
 	return m
 }
 
+func CalculateLiveOrderSummary(liveOrders []*Order, learnedPrices map[string]float64) []ProductSummary {
+	m := CalculateSummaries(liveOrders, learnedPrices)
+	out := make([]ProductSummary, 0, len(m))
+	for _, s := range m {
+		out = append(out, *s)
+	}
+	// Sort by total units descending
+	sort.Slice(out, func(i, j int) bool { return out[i].TotalUnits > out[j].TotalUnits })
+	return out
+}
+
 func CalculateEmailStats(orders map[string]*Order, liveOrderCount int) EmailStats {
 	totalOrders := len(orders)
 	totalCanceled := 0
@@ -244,19 +256,21 @@ func GenerateHTML(orders map[string]*Order, totalEmailsScanned int, daysToScan i
 	orderDetails := PrepareOrderDetails(nonCanceled, learned)
 	liveOrdersFiltered := filterLiveOrders(nonCanceled, shippedOrders)
 	liveOrdersForTemplate := PrepareOrderDetails(liveOrdersFiltered, learned)
+	liveOrderSummary := CalculateLiveOrderSummary(liveOrdersFiltered, learned)
 	emailStats := CalculateEmailStats(orders, len(liveOrdersFiltered))
 
 	data := TemplateData{
-		Stats:         stats,
-		EmailStats:    emailStats,
-		Orders:        orderDetails,
-		ShippedOrders: shippedOrders,
-		DateRange:     dateRangeStr,
-		ProductSpend:  productSummaries,
-		ProductCancel: stats,
-		OrderLines:    orderDetails,
-		Shipments:     shippedOrders,
-		LiveOrders:    liveOrdersForTemplate,
+		Stats:            stats,
+		EmailStats:       emailStats,
+		Orders:           orderDetails,
+		ShippedOrders:    shippedOrders,
+		DateRange:        dateRangeStr,
+		ProductSpend:     productSummaries,
+		ProductCancel:    stats,
+		OrderLines:       orderDetails,
+		Shipments:        shippedOrders,
+		LiveOrders:       liveOrdersForTemplate,
+		LiveOrderSummary: liveOrderSummary,
 	}
 
 	t := template.Must(template.New("webpage").Parse(templateHTML))
