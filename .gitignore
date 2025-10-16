@@ -1,7 +1,12 @@
-# Ignore generated report files and credentials
+# Sensitive credentials and tokens
+credentials.json
+token.json
+.env
+
+# Generated report files
 *.csv
 *.txt
-*.json
+out/
 
 # Binaries for programs and plugins
 *.exe
@@ -36,9 +41,14 @@ _testmain.go
 
 # Cache directory and SQLite database files
 .cache/
+.data/
 *.db
 *.db-wal
 *.db-shm
+
+# Node modules and frontend build
+web/node_modules/
+web/dist/
 
 # Editor/IDE specific files
 # Visual Studio Code
@@ -57,5 +67,6 @@ _testmain.go
 # Logs
 *.log
 
-# Executable
+# Executables
 walmart-order-checker
+/bin/

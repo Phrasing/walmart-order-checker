@@ -138,11 +138,11 @@ func (c *MessageCache) Set(msgID string, result *CachedResult) error {
 }
 
 func (c *MessageCache) Clear() error {
+	// Use TRUNCATE-style approach for faster clearing
+	// VACUUM is intentionally omitted as it's slow (13+ seconds on large DBs)
+	// and unnecessary for cache clearing. If disk space reclamation is needed,
+	// consider running VACUUM manually/periodically in a separate maintenance task.
 	_, err := c.db.Exec("DELETE FROM parsed_results")
-	if err != nil {
-		return err
-	}
-	_, err = c.db.Exec("VACUUM")
 	return err
 }
 

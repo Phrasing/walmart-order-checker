@@ -208,6 +208,10 @@ func FetchMessages(srv *gm.Service, user, query string) ([]*gm.Message, error) {
 		}
 		r, err := req.Do()
 		if err != nil {
+			// Check if this is a Gmail API rate limit error
+			if strings.Contains(err.Error(), "rateLimitExceeded") || strings.Contains(err.Error(), "RATE_LIMIT_EXCEEDED") {
+				return nil, fmt.Errorf("Gmail API rate limit exceeded. Please wait a few minutes before scanning again")
+			}
 			return nil, fmt.Errorf("list messages: %w", err)
 		}
 		all = append(all, r.Messages...)
@@ -446,30 +450,47 @@ func getSubject(headers []*gm.MessagePartHeader) string {
 	return ""
 }
 
+type ProgressCallback func(processed int)
+
 func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map[string]*report.Order, []*report.ShippedOrder, error) {
+	return ProcessEmailsWithProgress(context.Background(), srv, user, allMessages, nil)
+}
+
+func ProcessEmailsWithProgress(ctx context.Context, srv *gm.Service, user string, allMessages []*gm.Message, progressCallback ProgressCallback) (map[string]*report.Order, []*report.ShippedOrder, error) {
 	orders := make(map[string]*report.Order)
 	var shipped []*report.ShippedOrder
 	shippedIDs := make(map[string]struct{})
 
 	var mu sync.Mutex
-	bar := progressbar.NewOptions(
-		len(allMessages),
-		progressbar.OptionSetDescription("Processing emails"),
-		progressbar.OptionSetWidth(50),
-		progressbar.OptionShowCount(),
-		progressbar.OptionEnableColorCodes(true),
-		progressbar.OptionClearOnFinish(),
-	)
+
+	// Disable progress bar for web server (it pollutes logs)
+	// Only show if callback is nil (CLI mode)
+	var bar *progressbar.ProgressBar
+	if progressCallback == nil {
+		bar = progressbar.NewOptions(
+			len(allMessages),
+			progressbar.OptionSetDescription("Processing emails"),
+			progressbar.OptionSetWidth(50),
+			progressbar.OptionShowCount(),
+			progressbar.OptionEnableColorCodes(true),
+			progressbar.OptionClearOnFinish(),
+		)
+	}
+
+	processedCount := 0
+	rateLimitErrors := 0
+	const maxRateLimitErrors = 5 // Abort after 5 rate limit errors
 
 	const workers = 24
 	jobs := make(chan string, workers*2)
 	var wg sync.WaitGroup
 
 	cache := NewMessageCache(".cache/messages", 24*time.Hour)
+	rateLimitAbort := make(chan struct{}, 1) // Signal channel for rate limit abort
 
-	processMessage := func(id string) (*CachedResult, error) {
+	processMessage := func(id string) (*CachedResult, bool, error) {
 		if cached, ok := cache.Get(id); ok {
-			return cached, nil
+			return cached, true, nil
 		}
 
 		const maxAttempts = 5
@@ -478,7 +499,7 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 		var err error
 
 		for attempt := 0; attempt < maxAttempts; attempt++ {
-			msg, err = srv.Users.Messages.Get(user, id).Format("full").Do()
+			msg, err = srv.Users.Messages.Get(user, id).Context(ctx).Format("full").Do()
 			if err == nil {
 				break
 			}
@@ -487,10 +508,10 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 				backoff *= 2
 				continue
 			}
-			return nil, err
+			return nil, false, err
 		}
 		if msg == nil {
-			return nil, fmt.Errorf("max retries exceeded")
+			return nil, false, fmt.Errorf("max retries exceeded")
 		}
 
 		subject := getSubject(msg.Payload.Headers)
@@ -538,18 +559,59 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 		}
 
 		cache.Set(id, result)
-		return result, nil
+		return result, false, nil
 	}
+
+	canceledWorkers := 0
+	var cancelMu sync.Mutex
 
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for id := range jobs {
-				result, err := processMessage(id)
+				// Check if context was cancelled (timeout or manual stop)
+				select {
+				case <-ctx.Done():
+					cancelMu.Lock()
+					canceledWorkers++
+					if canceledWorkers == 1 {
+						log.Printf("Scan cancelled, stopping %d workers...", workers)
+					}
+					cancelMu.Unlock()
+					return
+				default:
+				}
+
+				result, fromCache, err := processMessage(id)
 				if err != nil {
-					log.Printf("process message %s: %v", id, err)
-					bar.Add(1)
+					// Skip logging context canceled errors
+					if !strings.Contains(err.Error(), "context canceled") {
+						log.Printf("process message %s: %v", id, err)
+
+						// Check if this is a rate limit error (max retries exceeded)
+						if strings.Contains(err.Error(), "max retries exceeded") {
+							mu.Lock()
+							rateLimitErrors++
+							if rateLimitErrors >= maxRateLimitErrors {
+								log.Printf("Rate limit threshold exceeded (%d errors), aborting scan", rateLimitErrors)
+								select {
+								case rateLimitAbort <- struct{}{}:
+								default:
+								}
+							}
+							mu.Unlock()
+						}
+					}
+					mu.Lock()
+					processedCount++
+					if progressCallback != nil {
+						progressCallback(processedCount)
+					}
+					mu.Unlock()
+					if bar != nil {
+						bar.Add(1)
+					}
 					continue
 				}
 
@@ -564,18 +626,64 @@ func ProcessEmails(srv *gm.Service, user string, allMessages []*gm.Message) (map
 						shippedIDs[key] = struct{}{}
 					}
 				}
+				processedCount++
+				if progressCallback != nil {
+					progressCallback(processedCount)
+				}
 				mu.Unlock()
 
-				bar.Add(1)
+				// Only update progress bar for non-cached items to show API progress
+				if bar != nil && !fromCache {
+					bar.Add(1)
+				}
 			}
 		}()
 	}
 
+	// Monitor for rate limit abort
+	aborted := false
+	go func() {
+		<-rateLimitAbort
+		mu.Lock()
+		aborted = true
+		mu.Unlock()
+		close(jobs) // Stop feeding more jobs
+	}()
+
+	// Feed jobs to workers
+feedLoop:
 	for _, m := range allMessages {
-		jobs <- m.Id
+		mu.Lock()
+		if aborted {
+			mu.Unlock()
+			break feedLoop
+		}
+		mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			break feedLoop
+		case jobs <- m.Id:
+		}
 	}
-	close(jobs)
+
+	// Only close if not already closed by abort
+	mu.Lock()
+	if !aborted {
+		close(jobs)
+	}
+	mu.Unlock()
+
 	wg.Wait()
+
+	// Check if scan was aborted due to rate limits
+	mu.Lock()
+	rateLimitCount := rateLimitErrors
+	mu.Unlock()
+
+	if rateLimitCount >= maxRateLimitErrors {
+		return nil, nil, fmt.Errorf("Gmail API rate limit exceeded. Please wait a few minutes before scanning again")
+	}
 
 	return orders, shipped, nil
 }
